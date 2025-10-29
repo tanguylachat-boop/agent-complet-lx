@@ -1,0 +1,483 @@
+{
+  "name": "LX-Email-Prospecting",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-daily",
+      "name": "Cron Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "notesInFlow": true,
+      "notes": "Déclenché quotidiennement pour envoi emails prospection"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id, c.email, c.first_name, c.last_name, c.company, c.canton, c.city\nFROM contacts c\nWHERE c.opted_out = false\nAND c.source != 'prospect'\nAND c.canton IN ('VD', 'GE', 'NE', 'FR', 'VS', 'JU')\nAND c.id NOT IN (\n  SELECT pe.contact_id \n  FROM prospect_emails pe \n  WHERE pe.sent_at > NOW() - INTERVAL '30 days'\n)\nORDER BY RANDOM()\nLIMIT {{ $env.PROSPECT_DAILY_LIMIT || 50 }}"
+      },
+      "id": "supabase-get-prospects",
+      "name": "Get Romandie Prospects",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Sélectionne des prospects en Suisse romande (non contactés récemment)"
+    },
+    {
+      "parameters": {
+        "batchSize": "={{ $env.PROSPECT_BATCH_SIZE || 10 }}",
+        "options": {}
+      },
+      "id": "split-in-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [650, 300],
+      "notesInFlow": true,
+      "notes": "Divise en lots pour respecter rate limiting"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "model": "claude-3-5-haiku-20241022",
+        "options": {
+          "temperature": 0.9,
+          "maxTokens": 1024
+        },
+        "text": "=Tu es un expert en cold outreach B2B pour le marché suisse.\nTon rôle est de créer des emails de prospection hautement personnalisés, non intrusifs et à forte valeur ajoutée.\nTon objectif : décrocher un appel de découverte, PAS vendre directement.\n\nCrée un email de prospection personnalisé pour ce contact :\n\nPROSPECT :\n- Prénom : {{ $json.first_name || 'Madame, Monsieur' }}\n- Nom : {{ $json.last_name || '' }}\n- Entreprise : {{ $json.company || 'votre entreprise' }}\n- Canton : {{ $json.canton || 'Romandie' }}\n- Ville : {{ $json.city || '' }}\n\nCONTEXTE LX STUDIO :\n- Agence web spécialisée en automatisation & développement sur mesure\n- Basée en Suisse romande\n- Clients : PME, startups, entrepreneurs\n- Services : Sites web, e-commerce, automatisation n8n, SEO\n\nOBJECTIF :\nProposer un appel de découverte de 15 minutes pour identifier des opportunités d'automatisation ou d'amélioration digitale.\n\nCONTRAINTES :\n- Longueur : 80-140 mots (STRICT)\n- Ton : professionnel, chaleureux, non vendeur\n- Français de Suisse\n- Personnalisation : mentionner un élément spécifique à l'entreprise (secteur, région, défi probable)\n- Valeur : offrir un insight ou une ressource gratuite\n- CTA : simple et bas-engagement (ex: \"Êtes-vous ouvert à un bref échange ?\")\n- Footer : signature + lien opt-out clair\n\nINTERDICTIONS :\n- Pas de formulation générique type \"votre entreprise pourrait bénéficier\"\n- Pas de promesses exagérées\n- Pas de jargon marketing creux\n- Pas de pièces jointes\n- Pas de multi-CTA\n\nSTRUCTURE :\n1. Objet percutant et personnalisé (max 50 caractères)\n2. Accroche personnalisée (1 phrase sur entreprise/secteur)\n3. Proposition de valeur concise (2-3 phrases max)\n4. CTA simple et doux\n5. Signature + opt-out\n\nFORMAT DE RÉPONSE (JSON) :\n{\n  \"subject\": \"Objet de l'email\",\n  \"body\": \"Corps de l'email complet\",\n  \"preview_text\": \"Texte de prévisualisation (50 caractères)\",\n  \"personalization_elements\": [\"élément 1\", \"élément 2\"]\n}\n\nGénère maintenant l'email de prospection."
+      },
+      "id": "anthropic-personalize",
+      "name": "Claude Personalize Email",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-lx-cred",
+          "name": "Anthropic-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Personnalise l'email pour chaque prospect via Claude"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse la réponse JSON de Claude\nconst claudeResponse = $json.output || $json.response || '{}';\nlet emailData;\n\ntry {\n  let cleanJson = claudeResponse;\n  if (typeof claudeResponse === 'string') {\n    cleanJson = claudeResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  }\n  emailData = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  // Fallback en cas d'erreur\n  const prospect = $('Split In Batches').item.json;\n  emailData = {\n    subject: 'Optimisation digitale pour ' + (prospect.company || 'votre entreprise'),\n    body: 'Bonjour ' + (prospect.first_name || 'Madame, Monsieur') + ',\\n\\nJe vous contacte car LX Studio aide les PME en Suisse romande à automatiser leurs processus.\\n\\nSeriez-vous ouvert à un bref échange ?\\n\\nCordialement,\\nLX Studio',\n    preview_text: 'Automatisation pour PME Suisse romande',\n    personalization_elements: []\n  };\n}\n\nconst prospect = $('Split In Batches').item.json;\n\nreturn {\n  json: {\n    ...emailData,\n    contact_id: prospect.id,\n    contact_email: prospect.email,\n    contact_first_name: prospect.first_name\n  }\n};"
+      },
+      "id": "code-parse-email",
+      "name": "Parse Email JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "notesInFlow": true,
+      "notes": "Parse l'email généré"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Génère un hash pour l'opt-out\nconst crypto = require('crypto');\nconst contactEmail = $json.contact_email;\n\nconst unsubscribeHash = crypto\n  .createHash('sha256')\n  .update(`${contactEmail}:${process.env.HASH_SECRET || 'lx-studio-secret'}`)\n  .digest('hex')\n  .substring(0, 16);\n\nconst unsubscribeUrl = `${process.env.BASE_URL_N8N}/webhook/lx/unsubscribe?email=${encodeURIComponent(contactEmail)}&hash=${unsubscribeHash}`;\n\n// Ajoute le footer avec opt-out\nconst fullBody = $json.body + '\\n\\n---\\n' +\n  'Tanguy Lachat\\n' +\n  'LX Studio - Agence Web & Automatisation\\n' +\n  'Email: contact@lxstudio.ch | Web: lxstudio.ch\\n' +\n  '📅 Prendre rendez-vous: ' + (process.env.CALENDLY_LINK || '') + '\\n\\n' +\n  'Vous recevez cet email car votre profil correspond à notre cible.\\n' +\n  'Se désabonner: ' + unsubscribeUrl;\n\nreturn {\n  json: {\n    ...$json,\n    body_with_footer: fullBody,\n    unsubscribe_url: unsubscribeUrl,\n    unsubscribe_hash: unsubscribeHash\n  }\n};"
+      },
+      "id": "code-add-footer",
+      "name": "Add Footer & Unsubscribe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "notesInFlow": true,
+      "notes": "Ajoute signature et lien opt-out"
+    },
+    {
+      "parameters": {
+        "operation": "sendEmail",
+        "fromEmail": "contact@lxstudio.ch",
+        "toEmail": "={{ $json.contact_email }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body_with_footer }}",
+        "options": {}
+      },
+      "id": "smtp-send-prospect",
+      "name": "Send Prospect Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1450, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-lx-cred",
+          "name": "SMTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Envoie l'email de prospection"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "prospect_emails",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "contact_id",
+              "value": "={{ $json.contact_id }}"
+            },
+            {
+              "column": "subject",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "column": "body",
+              "value": "={{ $json.body_with_footer }}"
+            },
+            {
+              "column": "status",
+              "value": "sent"
+            },
+            {
+              "column": "sent_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-sent",
+      "name": "Log Sent Email",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1650, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre l'email envoyé"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $env.PROSPECT_BATCH_DELAY_SECONDS || 40 }}",
+        "unit": "seconds"
+      },
+      "id": "wait-between-batches",
+      "name": "Wait Between Batches",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1850, 300],
+      "webhookId": "wait-prospect-batch",
+      "notesInFlow": true,
+      "notes": "Pause entre chaque lot (rate limiting)"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "📧 *Prospection quotidienne*\n\n*Envoyés:* {{ $('Split In Batches').context.noItemsLeft ? $('Split In Batches').context.currentBatch * ($env.PROSPECT_BATCH_SIZE || 10) : 'En cours...' }}\n*Quota:* {{ $env.PROSPECT_DAILY_LIMIT || 50 }}\n\n✅ Campagne terminée",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-complete",
+      "name": "Telegram Notify Complete",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2050, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification fin de campagne"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lx/unsubscribe",
+        "options": {},
+        "responseMode": "onReceived"
+      },
+      "id": "webhook-unsubscribe",
+      "name": "Webhook Unsubscribe",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 600],
+      "webhookId": "lx-unsubscribe",
+      "notesInFlow": true,
+      "notes": "Handler pour désabonnement"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Vérifie le hash et l'email\nconst query = $json.query || {};\nconst email = query.email;\nconst hash = query.hash;\n\nif (!email || !hash) {\n  throw new Error('Missing email or hash parameter');\n}\n\nconst crypto = require('crypto');\nconst expectedHash = crypto\n  .createHash('sha256')\n  .update(`${email}:${process.env.HASH_SECRET || 'lx-studio-secret'}`)\n  .digest('hex')\n  .substring(0, 16);\n\nif (hash !== expectedHash) {\n  throw new Error('Invalid security hash');\n}\n\nreturn {\n  json: {\n    email: email,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "code-verify-unsubscribe",
+      "name": "Verify Unsubscribe Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 600],
+      "notesInFlow": true,
+      "notes": "Vérifie le hash de sécurité"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "contacts",
+        "filterType": "manual",
+        "matchBy": "email",
+        "value": "={{ $json.email }}",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "opted_out",
+              "value": "true"
+            },
+            {
+              "column": "opted_out_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-opt-out",
+      "name": "Mark as Opted Out",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [650, 600],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Marque le contact comme désinscrit"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"fr-CH\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Désabonnement confirmé - LX Studio</title>\n    <style>\n        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }\n        .container { max-width: 500px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }\n        .check-icon { font-size: 48px; color: #28a745; }\n        h2 { color: #333; }\n        p { line-height: 1.6; color: #666; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"check-icon\">✓</div>\n        <h2>Désabonnement confirmé</h2>\n        <p>\n            Votre adresse <strong>{{ $json.email }}</strong> a été retirée\n            de notre liste de prospection.\n        </p>\n        <p>\n            Vous ne recevrez plus d'emails promotionnels de notre part.\n        </p>\n        <p style=\"font-size: 14px; color: #999; margin-top: 30px;\">\n            Merci de nous avoir donné l'opportunité de vous contacter.<br>\n            Si c'était une erreur, contactez-nous à\n            <a href=\"mailto:contact@lxstudio.ch\">contact@lxstudio.ch</a>.\n        </p>\n        <p style=\"font-size: 12px; color: #999; margin-top: 40px;\">\n            LX Studio | Suisse Romande\n        </p>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "webhook-response-unsub",
+      "name": "Unsubscribe Confirmation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 600],
+      "notesInFlow": true,
+      "notes": "Page de confirmation de désabonnement"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Email-Prospecting"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2050, 500],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log erreurs"
+    }
+  ],
+  "connections": {
+    "Cron Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Romandie Prospects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Romandie Prospects": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Claude Personalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Notify Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Personalize Email": {
+      "main": [
+        [
+          {
+            "node": "Parse Email JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email JSON": {
+      "main": [
+        [
+          {
+            "node": "Add Footer & Unsubscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Footer & Unsubscribe": {
+      "main": [
+        [
+          {
+            "node": "Send Prospect Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Prospect Email": {
+      "main": [
+        [
+          {
+            "node": "Log Sent Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Sent Email": {
+      "main": [
+        [
+          {
+            "node": "Wait Between Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Between Batches": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Unsubscribe": {
+      "main": [
+        [
+          {
+            "node": "Verify Unsubscribe Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Unsubscribe Hash": {
+      "main": [
+        [
+          {
+            "node": "Mark as Opted Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Opted Out": {
+      "main": [
+        [
+          {
+            "node": "Unsubscribe Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Marketing"
+    },
+    {
+      "name": "Prospecting"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 2,
+  "active": true
+}

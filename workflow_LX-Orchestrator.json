@@ -1,0 +1,559 @@
+{
+  "name": "LX-Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lx/orchestrate",
+        "options": {}
+      },
+      "id": "webhook-orchestrate",
+      "name": "Webhook Orchestrate",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "lx-orchestrate-main",
+      "notesInFlow": true,
+      "notes": "Point d'entrée principal pour tous les événements LX"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Génère un hash d'idempotence pour éviter les doublons\nconst crypto = require('crypto');\n\nconst eventData = $input.first().json;\nconst eventKind = eventData.event?.kind || eventData.kind || 'unknown';\nconst eventId = eventData.event?.id || eventData.id || Date.now().toString();\nconst timestamp = eventData.timestamp || new Date().toISOString();\n\n// Hash pour idempotence\nconst hashSecret = process.env.HASH_SECRET || 'lx-studio-secret';\nconst eventHash = crypto\n  .createHash('sha256')\n  .update(`${eventKind}:${eventId}:${hashSecret}`)\n  .digest('hex');\n\nreturn {\n  json: {\n    event_hash: eventHash,\n    event_kind: eventKind,\n    event_id: eventId,\n    timestamp: timestamp,\n    payload: eventData\n  }\n};"
+      },
+      "id": "code-idempotence",
+      "name": "Generate Event Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "notesInFlow": true,
+      "notes": "Génère un hash unique pour garantir l'idempotence"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM events WHERE event_hash = '{{ $json.event_hash }}' LIMIT 1"
+      },
+      "id": "supabase-check-duplicate",
+      "name": "Check Duplicate Event",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Vérifie si l'événement a déjà été traité"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-not-duplicate",
+      "name": "If Not Duplicate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "notesInFlow": true,
+      "notes": "Continue uniquement si l'événement est nouveau"
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $('Generate Event Hash').item.json.event_kind }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "email",
+              "output": 0
+            },
+            {
+              "value2": "voice",
+              "output": 1
+            },
+            {
+              "value2": "blog",
+              "output": 2
+            },
+            {
+              "value2": "social",
+              "output": 3
+            },
+            {
+              "value2": "prospect",
+              "output": 4
+            },
+            {
+              "value2": "stripe",
+              "output": 5
+            }
+          ]
+        },
+        "fallbackOutput": 6
+      },
+      "id": "switch-event-kind",
+      "name": "Switch Event Kind",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1050, 300],
+      "notesInFlow": true,
+      "notes": "Route vers le workflow approprié selon le type d'événement"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Email-To-Quote"
+      },
+      "id": "execute-email-workflow",
+      "name": "Execute Email Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 100],
+      "notesInFlow": true,
+      "notes": "Traite les demandes reçues par email"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Voice-Reception"
+      },
+      "id": "execute-voice-workflow",
+      "name": "Execute Voice Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 200],
+      "notesInFlow": true,
+      "notes": "Traite les appels téléphoniques Twilio"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Blog-Auto"
+      },
+      "id": "execute-blog-workflow",
+      "name": "Execute Blog Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 300],
+      "notesInFlow": true,
+      "notes": "Génère et publie des articles de blog"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Social-Publisher"
+      },
+      "id": "execute-social-workflow",
+      "name": "Execute Social Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 400],
+      "notesInFlow": true,
+      "notes": "Publie sur les réseaux sociaux"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Email-Prospecting"
+      },
+      "id": "execute-prospect-workflow",
+      "name": "Execute Prospect Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1300, 500],
+      "notesInFlow": true,
+      "notes": "Envoie des emails de prospection"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Workflow pour événements Stripe (webhooks)\nconst stripeEvent = $input.first().json.payload;\n\nreturn {\n  json: {\n    message: 'Stripe event received',\n    event_type: stripeEvent.type,\n    stripe_id: stripeEvent.id\n  }\n};"
+      },
+      "id": "code-stripe-handler",
+      "name": "Handle Stripe Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 600],
+      "notesInFlow": true,
+      "notes": "Traite les webhooks Stripe (paiements, factures)"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "events",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "event_hash",
+              "value": "={{ $('Generate Event Hash').item.json.event_hash }}"
+            },
+            {
+              "column": "kind",
+              "value": "={{ $('Generate Event Hash').item.json.event_kind }}"
+            },
+            {
+              "column": "workflow_name",
+              "value": "={{ $node.name }}"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "payload",
+              "value": "={{ JSON.stringify($('Generate Event Hash').item.json.payload) }}"
+            },
+            {
+              "column": "status",
+              "value": "success"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-event",
+      "name": "Insert Event Success",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1550, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre l'événement traité avec succès"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "✅ Event processed successfully\n\n*Kind:* {{ $('Generate Event Hash').item.json.event_kind }}\n*Hash:* {{ $('Generate Event Hash').item.json.event_hash.substring(0, 16) }}...\n*Workflow:* {{ $node.name }}\n*Execution:* {{ $execution.id }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-success",
+      "name": "Telegram Notify Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1750, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram en cas de succès (optionnel)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Marque l'événement comme dupliqué (déjà traité)\nreturn {\n  json: {\n    status: 'duplicate',\n    event_hash: $('Generate Event Hash').item.json.event_hash,\n    message: 'Event already processed (idempotence)'\n  }\n};"
+      },
+      "id": "code-duplicate-handler",
+      "name": "Handle Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 500],
+      "notesInFlow": true,
+      "notes": "Gère les événements déjà traités (idempotence)"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Orchestrator"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "node_name",
+              "value": "={{ $node.name }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error || 'Unknown error' }}"
+            },
+            {
+              "column": "input_data",
+              "value": "={{ JSON.stringify($input.all()) }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-error",
+      "name": "Insert Error Log",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1300, 700],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Enregistre les erreurs dans Supabase"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "🚨 *ERREUR LX-Orchestrator*\n\n*Workflow:* LX-Orchestrator\n*Node:* {{ $json.node_name || 'Unknown' }}\n*Execution:* {{ $execution.id }}\n\n*Erreur:*\n{{ $json.error_message || 'Unknown error' }}\n\n_Vérifiez les logs Supabase_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-error",
+      "name": "Telegram Notify Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1550, 700],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Notification Telegram en cas d'erreur"
+    }
+  ],
+  "connections": {
+    "Webhook Orchestrate": {
+      "main": [
+        [
+          {
+            "node": "Generate Event Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Event Hash": {
+      "main": [
+        [
+          {
+            "node": "Check Duplicate Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate Event": {
+      "main": [
+        [
+          {
+            "node": "If Not Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Not Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Switch Event Kind",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Event Kind": {
+      "main": [
+        [
+          {
+            "node": "Execute Email Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Voice Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Blog Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Social Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Prospect Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Stripe Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Email Workflow": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Voice Workflow": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Blog Workflow": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Social Workflow": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Prospect Workflow": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Stripe Event": {
+      "main": [
+        [
+          {
+            "node": "Insert Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Event Success": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Error Log": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Insert Error Log"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Core"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": true
+}

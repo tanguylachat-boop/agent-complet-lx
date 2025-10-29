@@ -1,0 +1,695 @@
+{
+  "name": "LX-Email-To-Quote",
+  "nodes": [
+    {
+      "parameters": {
+        "protocol": "imap",
+        "mailbox": "INBOX",
+        "options": {
+          "forceReconnect": 30,
+          "customEmailConfig": "={{ JSON.stringify({ searchFilter: ['UNSEEN', ['TO', 'contact@lxstudio.ch']] }) }}"
+        }
+      },
+      "id": "imap-trigger",
+      "name": "IMAP Email Trigger",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "credentials": {
+        "imap": {
+          "id": "imap-lx-cred",
+          "name": "IMAP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Déclenché pour chaque nouvel email reçu à contact@lxstudio.ch"
+    },
+    {
+      "parameters": {
+        "operation": "binaryToText",
+        "options": {}
+      },
+      "id": "extract-email-text",
+      "name": "Extract Email Text",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "notesInFlow": true,
+      "notes": "Convertit le contenu de l'email en texte"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Détection simple de langue et extraction de champs basiques\nconst emailBody = $json.text || $json.body || '';\nconst subject = $json.subject || '';\nconst from = $json.from || '';\n\n// Détection de langue simple\nlet detectedLang = 'fr';\nif (/\\b(hallo|guten|tag|ich|möchte|website)\\b/i.test(emailBody)) {\n  detectedLang = 'de';\n} else if (/\\b(buongiorno|salve|vorrei|sito|web)\\b/i.test(emailBody)) {\n  detectedLang = 'it';\n} else if (/\\b(hello|good|want|website|quote)\\b/i.test(emailBody)) {\n  detectedLang = 'en';\n}\n\n// Extraction email (regex simple)\nconst emailMatch = from.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/i);\nconst email = emailMatch ? emailMatch[1] : null;\n\n// Extraction téléphone (formats CH/FR)\nconst phoneMatch = emailBody.match(/(?:\\+41|0041|0)[\\s.-]?(?:2[1-9]|3[1-9]|4[1-9]|5[1-9]|6[1-9]|7[1-9]|8[1-9])[\\s.-]?\\d{3}[\\s.-]?\\d{2}[\\s.-]?\\d{2}/i);\nconst phone = phoneMatch ? phoneMatch[0].replace(/[\\s.-]/g, '') : null;\n\nreturn {\n  json: {\n    raw_body: emailBody,\n    subject: subject,\n    from: from,\n    detected_language: detectedLang,\n    extracted_email: email,\n    extracted_phone: phone,\n    body_length: emailBody.length\n  }\n};"
+      },
+      "id": "code-basic-extraction",
+      "name": "Basic Extraction & Language Detection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "notesInFlow": true,
+      "notes": "Détecte la langue et extrait les infos de base avant l'appel LLM"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "model": "claude-3-5-haiku-20241022",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 4096
+        },
+        "text": "=Tu es un assistant spécialisé dans l'extraction de données structurées à partir d'emails de demandes de devis.\nTon rôle est d'analyser le contenu d'un email et d'extraire toutes les informations pertinentes pour générer un devis précis.\nRéponds UNIQUEMENT en JSON valide, sans texte additionnel.\n\nAnalyse cet email et extrais les informations suivantes au format JSON strict :\n\nEMAIL :\n---\n{{ $json.raw_body }}\n---\n\nSUJET : {{ $json.subject }}\nFROM : {{ $json.from }}\n\nSchéma JSON attendu :\n{\n  \"contact\": {\n    \"first_name\": \"string ou null\",\n    \"last_name\": \"string ou null\",\n    \"email\": \"string (obligatoire)\",\n    \"phone\": \"string ou null (format international préféré)\",\n    \"company\": \"string ou null\",\n    \"language\": \"string (détecté : 'fr', 'de', 'it', 'en')\"\n  },\n  \"project\": {\n    \"service_type\": \"string (parmi: 'website', 'ecommerce', 'custom', 'maintenance', 'seo', 'automation')\",\n    \"description\": \"string (résumé du besoin en 1-3 phrases)\",\n    \"budget_range\": \"string ou null (ex: '5000-10000', 'flexible', 'non mentionné')\",\n    \"timeline\": \"string ou null (ex: 'urgent', '2-3 mois', 'flexible')\",\n    \"priority\": \"string (calculé : 'low', 'medium', 'high', 'urgent')\",\n    \"specific_requirements\": [\"array de strings avec besoins spécifiques\"]\n  },\n  \"metadata\": {\n    \"canton\": \"string ou null (extrait si mentionné : VD, GE, NE, FR, VS, JU)\",\n    \"city\": \"string ou null\",\n    \"source\": \"email\",\n    \"confidence_score\": \"number entre 0 et 1\"\n  }\n}\n\nRÈGLES :\n- email est OBLIGATOIRE (extraire de la signature ou du champ From)\n- service_type : choisis le plus pertinent selon le contexte\n- priority : détermine selon l'urgence exprimée et la taille du projet\n- language : utilise {{ $json.detected_language }} comme base mais affine si nécessaire\n- Si information manquante : utilise null\n- confidence_score : évalue ta confiance dans l'extraction (0.0 à 1.0)\n\nRetourne UNIQUEMENT le JSON, sans markdown, sans commentaire."
+      },
+      "id": "anthropic-extraction",
+      "name": "Claude Extract Info",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-lx-cred",
+          "name": "Anthropic-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Extraction structurée via Claude Haiku (rapide & économique)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse la réponse JSON de Claude\nconst claudeResponse = $json.output || $json.response || '{}';\nlet extractedData;\n\ntry {\n  // Nettoie le markdown si présent\n  let cleanJson = claudeResponse;\n  if (typeof claudeResponse === 'string') {\n    cleanJson = claudeResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  }\n  extractedData = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  // Fallback en cas d'erreur de parsing\n  const prevData = $('Basic Extraction & Language Detection').item.json;\n  extractedData = {\n    contact: {\n      email: prevData.extracted_email || 'unknown@email.com',\n      language: prevData.detected_language || 'fr'\n    },\n    project: {\n      service_type: 'custom',\n      description: prevData.subject || 'Demande de devis',\n      priority: 'medium',\n      specific_requirements: []\n    },\n    metadata: {\n      source: 'email',\n      confidence_score: 0.3\n    }\n  };\n}\n\nreturn { json: extractedData };"
+      },
+      "id": "code-parse-extraction",
+      "name": "Parse Extraction JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "notesInFlow": true,
+      "notes": "Parse et valide le JSON retourné par Claude"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "contacts",
+        "options": {
+          "onConflict": "email"
+        },
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "email",
+              "value": "={{ $json.contact.email }}"
+            },
+            {
+              "column": "first_name",
+              "value": "={{ $json.contact.first_name }}"
+            },
+            {
+              "column": "last_name",
+              "value": "={{ $json.contact.last_name }}"
+            },
+            {
+              "column": "phone",
+              "value": "={{ $json.contact.phone }}"
+            },
+            {
+              "column": "company",
+              "value": "={{ $json.contact.company }}"
+            },
+            {
+              "column": "language",
+              "value": "={{ $json.contact.language }}"
+            },
+            {
+              "column": "canton",
+              "value": "={{ $json.metadata.canton }}"
+            },
+            {
+              "column": "city",
+              "value": "={{ $json.metadata.city }}"
+            },
+            {
+              "column": "source",
+              "value": "email"
+            }
+          ]
+        }
+      },
+      "id": "supabase-upsert-contact",
+      "name": "Upsert Contact",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Crée ou met à jour le contact dans Supabase"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "leads",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "contact_id",
+              "value": "={{ $('Upsert Contact').item.json.id }}"
+            },
+            {
+              "column": "status",
+              "value": "new"
+            },
+            {
+              "column": "priority",
+              "value": "={{ $('Parse Extraction JSON').item.json.project.priority }}"
+            },
+            {
+              "column": "service_type",
+              "value": "={{ $('Parse Extraction JSON').item.json.project.service_type }}"
+            },
+            {
+              "column": "project_description",
+              "value": "={{ $('Parse Extraction JSON').item.json.project.description }}"
+            },
+            {
+              "column": "budget_range",
+              "value": "={{ $('Parse Extraction JSON').item.json.project.budget_range }}"
+            },
+            {
+              "column": "timeline",
+              "value": "={{ $('Parse Extraction JSON').item.json.project.timeline }}"
+            },
+            {
+              "column": "score",
+              "value": "={{ Math.round($('Parse Extraction JSON').item.json.metadata.confidence_score * 100) }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-lead",
+      "name": "Insert Lead",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Crée une nouvelle opportunité (lead)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Calcul du pricing selon le barème\nconst projectData = $('Parse Extraction JSON').item.json.project;\nconst serviceType = projectData.service_type;\nconst requirements = projectData.specific_requirements || [];\nconst timeline = projectData.timeline || '';\n\n// Barème de base (CHF HT)\nconst basePricing = {\n  website: 2500,\n  ecommerce: 5000,\n  custom: 8000,\n  maintenance: 200,\n  seo: 500,\n  automation: 150\n};\n\nlet baseAmount = basePricing[serviceType] || 2500;\nlet multiplier = 1.0;\n\n// Ajustements selon requirements\nrequirements.forEach(req => {\n  const reqLower = req.toLowerCase();\n  if (reqLower.includes('multilingue')) multiplier += 0.2;\n  if (reqLower.includes('paiement')) multiplier += 0.3;\n  if (reqLower.includes('api')) multiplier += 0.25;\n  if (reqLower.includes('mobile')) multiplier += 0.4;\n  if (reqLower.includes('crm')) multiplier += 0.3;\n  if (reqLower.includes('analytics')) multiplier += 0.15;\n  if (reqLower.includes('seo')) multiplier += 0.2;\n});\n\n// Supplément urgence\nif (timeline.toLowerCase().includes('urgent') || timeline.toLowerCase().includes('rapide')) {\n  multiplier += 0.25;\n}\n\nconst amountHT = Math.round(baseAmount * multiplier);\nconst vatAmount = Math.round(amountHT * 0.077);\nconst amountTTC = amountHT + vatAmount;\n\n// Labels pour l'email\nconst serviceLabels = {\n  website: 'Site vitrine',\n  ecommerce: 'Boutique e-commerce',\n  custom: 'Application sur mesure',\n  maintenance: 'Maintenance',\n  seo: 'SEO',\n  automation: 'Automatisation'\n};\n\nreturn {\n  json: {\n    pricing: {\n      service_type: serviceType,\n      service_label: serviceLabels[serviceType] || 'Développement web',\n      base_amount: baseAmount,\n      multiplier: multiplier,\n      amount_ht: amountHT,\n      vat_rate: 0.077,\n      vat_amount: vatAmount,\n      amount_ttc: amountTTC,\n      currency: 'CHF'\n    },\n    project: {\n      description_short: projectData.description.substring(0, 100),\n      timeline_estimated: timeline || '4-6 semaines',\n      warranty_period: '3 mois',\n      support_included: '1 mois de support gratuit'\n    }\n  }\n};"
+      },
+      "id": "code-pricing-builder",
+      "name": "Build Pricing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300],
+      "notesInFlow": true,
+      "notes": "Calcule le montant du devis selon le barème"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/quotes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customer_email",
+              "value": "={{ $('Parse Extraction JSON').item.json.contact.email }}"
+            },
+            {
+              "name": "line_items[0][price_data][currency]",
+              "value": "chf"
+            },
+            {
+              "name": "line_items[0][price_data][unit_amount]",
+              "value": "={{ $('Build Pricing').item.json.pricing.amount_ttc * 100 }}"
+            },
+            {
+              "name": "line_items[0][price_data][product_data][name]",
+              "value": "={{ $('Build Pricing').item.json.pricing.service_label }}"
+            },
+            {
+              "name": "line_items[0][quantity]",
+              "value": "1"
+            },
+            {
+              "name": "expires_at",
+              "value": "={{ Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "stripe-create-quote",
+      "name": "Stripe Create Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1650, 300],
+      "credentials": {
+        "stripeApi": {
+          "id": "stripe-lx-cred",
+          "name": "Stripe-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Crée un devis dans Stripe"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "quotes",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "lead_id",
+              "value": "={{ $('Insert Lead').item.json.id }}"
+            },
+            {
+              "column": "stripe_quote_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "column": "quote_number",
+              "value": "={{ $json.number || 'Q-' + Date.now() }}"
+            },
+            {
+              "column": "amount_chf",
+              "value": "={{ $('Build Pricing').item.json.pricing.amount_ttc }}"
+            },
+            {
+              "column": "currency",
+              "value": "CHF"
+            },
+            {
+              "column": "status",
+              "value": "sent"
+            },
+            {
+              "column": "accept_url",
+              "value": "={{ $env.BASE_URL_N8N }}/webhook/lx/quote/accept?lead_id={{ $('Insert Lead').item.json.id }}"
+            },
+            {
+              "column": "expires_at",
+              "value": "={{ new Date(Date.now() + 30*24*60*60*1000).toISOString() }}"
+            },
+            {
+              "column": "sent_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-quote",
+      "name": "Insert Quote",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1850, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre le devis dans Supabase"
+    },
+    {
+      "parameters": {
+        "operation": "sendEmail",
+        "fromEmail": "contact@lxstudio.ch",
+        "toEmail": "={{ $('Parse Extraction JSON').item.json.contact.email }}",
+        "subject": "Votre devis LX Studio - {{ $('Build Pricing').item.json.pricing.service_label }}",
+        "emailFormat": "html",
+        "text": "=Bonjour {{ $('Parse Extraction JSON').item.json.contact.first_name || 'Madame, Monsieur' }},\n\nMerci pour votre demande concernant {{ $('Build Pricing').item.json.project.description_short }}.\n\nNous avons le plaisir de vous transmettre notre proposition :\n\n💰 Montant total TTC : {{ $('Build Pricing').item.json.pricing.amount_ttc }} CHF\n(dont {{ $('Build Pricing').item.json.pricing.amount_ht }} CHF HT + TVA 7.7%)\n\n📋 Service : {{ $('Build Pricing').item.json.pricing.service_label }}\n⏱️ Délai estimé : {{ $('Build Pricing').item.json.project.timeline_estimated }}\n🛡️ Garantie : {{ $('Build Pricing').item.json.project.warranty_period }}\n✅ Support inclus : {{ $('Build Pricing').item.json.project.support_included }}\n\n👉 Accepter ce devis : {{ $('Insert Quote').item.json.accept_url }}\n\nCe devis est valable 30 jours.\nDes questions ? Répondez simplement à cet email.\n\nCordialement,\nL'équipe LX Studio\n\n---\nLX Studio | Agence Web & Automatisation\nEmail: contact@lxstudio.ch | Web: lxstudio.ch\n📅 Prendre rendez-vous : {{ $env.CALENDLY_LINK }}",
+        "options": {
+          "ccEmail": "contact@lxstudio.ch"
+        }
+      },
+      "id": "smtp-send-quote",
+      "name": "Send Quote Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-lx-cred",
+          "name": "SMTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Envoie le devis par email au prospect"
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "mailbox": "Processed",
+        "options": {}
+      },
+      "id": "imap-move-processed",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [2250, 300],
+      "credentials": {
+        "imap": {
+          "id": "imap-lx-cred",
+          "name": "IMAP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Déplace l'email dans le dossier 'Processed'"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "events",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "event_hash",
+              "value": "={{ $workflow.id }}-{{ $execution.id }}"
+            },
+            {
+              "column": "kind",
+              "value": "email"
+            },
+            {
+              "column": "entity_type",
+              "value": "quote"
+            },
+            {
+              "column": "entity_id",
+              "value": "={{ $('Insert Quote').item.json.id }}"
+            },
+            {
+              "column": "workflow_name",
+              "value": "LX-Email-To-Quote"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "status",
+              "value": "success"
+            },
+            {
+              "column": "processed_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-event",
+      "name": "Log Event Success",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2450, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre l'événement de succès"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "✅ *Nouveau devis envoyé*\n\n*Contact:* {{ $('Parse Extraction JSON').item.json.contact.first_name }} {{ $('Parse Extraction JSON').item.json.contact.last_name }}\n*Email:* {{ $('Parse Extraction JSON').item.json.contact.email }}\n*Service:* {{ $('Build Pricing').item.json.pricing.service_label }}\n*Montant:* {{ $('Build Pricing').item.json.pricing.amount_ttc }} CHF\n*Lead ID:* {{ $('Insert Lead').item.json.id }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify",
+      "name": "Telegram Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2650, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram du nouveau devis"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Email-To-Quote"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2050, 600],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log erreurs dans Supabase"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "🚨 *Erreur Email-To-Quote*\n\nUne erreur est survenue lors du traitement d'un email.\n\n*Execution:* {{ $execution.id }}\n*Error:* {{ $json.error_message }}\n\nVérifiez les logs.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-error",
+      "name": "Telegram Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2250, 600],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Notification erreur Telegram"
+    }
+  ],
+  "connections": {
+    "IMAP Email Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Text": {
+      "main": [
+        [
+          {
+            "node": "Basic Extraction & Language Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic Extraction & Language Detection": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract Info": {
+      "main": [
+        [
+          {
+            "node": "Parse Extraction JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Extraction JSON": {
+      "main": [
+        [
+          {
+            "node": "Upsert Contact",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "Build Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Lead": {
+      "main": [
+        [
+          {
+            "node": "Build Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pricing": {
+      "main": [
+        [
+          {
+            "node": "Stripe Create Quote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stripe Create Quote": {
+      "main": [
+        [
+          {
+            "node": "Insert Quote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Quote": {
+      "main": [
+        [
+          {
+            "node": "Send Quote Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Quote Email": {
+      "main": [
+        [
+          {
+            "node": "Move to Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to Processed": {
+      "main": [
+        [
+          {
+            "node": "Log Event Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Event Success": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error": {
+      "main": [
+        [
+          {
+            "node": "Telegram Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Core"
+    },
+    {
+      "name": "Email"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": true
+}

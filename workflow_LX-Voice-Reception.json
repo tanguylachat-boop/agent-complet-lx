@@ -1,0 +1,570 @@
+{
+  "name": "LX-Voice-Reception",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lx/voice/inbound",
+        "options": {}
+      },
+      "id": "webhook-twilio-inbound",
+      "name": "Webhook Twilio Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "lx-voice-inbound",
+      "notesInFlow": true,
+      "notes": "Webhook Twilio pour appels entrants"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse le payload Twilio\nconst body = $json.body || $json;\n\nconst callSid = body.CallSid;\nconst from = body.From || body.Caller;\nconst to = body.To || body.Called;\nconst callStatus = body.CallStatus;\nconst direction = body.Direction || 'inbound';\nconst recordingUrl = body.RecordingUrl || null;\nconst transcription = body.TranscriptionText || null;\n\nreturn {\n  json: {\n    call_sid: callSid,\n    phone_from: from,\n    phone_to: to,\n    call_status: callStatus,\n    direction: direction,\n    recording_url: recordingUrl,\n    transcript: transcription,\n    raw_payload: body\n  }\n};"
+      },
+      "id": "code-parse-twilio",
+      "name": "Parse Twilio Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "notesInFlow": true,
+      "notes": "Parse les données Twilio"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.transcript }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-has-transcript",
+      "name": "If Has Transcript",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "notesInFlow": true,
+      "notes": "Vérifie si transcription disponible"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Recordings/{{ $('Parse Twilio Payload').item.json.call_sid }}/Transcriptions.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "twilio-get-transcription",
+      "name": "Get Twilio Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 450],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "twilio-lx-cred",
+          "name": "Twilio-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Récupère la transcription depuis Twilio si pas déjà fournie"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Utilise la transcription existante ou celle récupérée\nconst parseData = $('Parse Twilio Payload').item.json;\nlet transcript = parseData.transcript;\n\nif (!transcript) {\n  // Essayer de récupérer depuis la réponse Twilio\n  const twilioResponse = $json;\n  if (twilioResponse.transcriptions && twilioResponse.transcriptions.length > 0) {\n    transcript = twilioResponse.transcriptions[0].transcription_text;\n  } else {\n    transcript = 'Transcription non disponible';\n  }\n}\n\nreturn {\n  json: {\n    ...parseData,\n    transcript: transcript\n  }\n};"
+      },
+      "id": "code-merge-transcript",
+      "name": "Merge Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 350],
+      "notesInFlow": true,
+      "notes": "Fusionne les données avec la transcription"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "model": "claude-3-5-haiku-20241022",
+        "options": {
+          "temperature": 0.2,
+          "maxTokens": 2048
+        },
+        "text": "=Tu es un assistant spécialisé dans l'analyse d'appels téléphoniques entrants.\nTon rôle est d'extraire l'intention principale et de résumer l'appel en quelques phrases claires.\n\nAnalyse cette transcription d'appel téléphonique :\n\nTRANSCRIPTION :\n---\n{{ $json.transcript }}\n---\n\nExtrais et structure les informations suivantes au format JSON :\n\n{\n  \"intent\": \"string (parmi : 'demande_devis', 'support_technique', 'information', 'reclamation', 'autre')\",\n  \"urgency\": \"string (parmi : 'low', 'medium', 'high', 'critical')\",\n  \"summary\": \"string (résumé en 2-3 phrases max)\",\n  \"action_required\": \"boolean (true si nécessite un suivi humain)\",\n  \"suggested_response\": \"string (réponse suggérée pour callback ou SMS)\",\n  \"lead_quality\": \"string (si demande_devis : 'cold', 'warm', 'hot')\",\n  \"sentiment\": \"string (parmi : 'positive', 'neutral', 'negative')\"\n}\n\nRÈGLES :\n- intent : détermine l'intention principale de l'appel\n- urgency : évalue l'urgence du besoin\n- summary : résumé factuel et concis\n- action_required : true si nécessite intervention humaine urgente\n- suggested_response : proposition de réponse courtoise et utile\n- lead_quality : si c'est une demande de devis, évalue la maturité\n- sentiment : analyse le ton général de l'appelant\n\nRetourne UNIQUEMENT le JSON, sans markdown."
+      },
+      "id": "anthropic-analyze-call",
+      "name": "Claude Analyze Call",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1250, 350],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-lx-cred",
+          "name": "Anthropic-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Analyse de l'appel via Claude (intent, urgence, résumé)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse la réponse JSON de Claude\nconst claudeResponse = $json.output || $json.response || '{}';\nlet analysisData;\n\ntry {\n  let cleanJson = claudeResponse;\n  if (typeof claudeResponse === 'string') {\n    cleanJson = claudeResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  }\n  analysisData = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  analysisData = {\n    intent: 'autre',\n    urgency: 'medium',\n    summary: 'Analyse non disponible',\n    action_required: true,\n    suggested_response: 'Merci pour votre appel. Nous reviendrons vers vous rapidement.',\n    lead_quality: 'cold',\n    sentiment: 'neutral'\n  };\n}\n\nreturn { json: analysisData };"
+      },
+      "id": "code-parse-analysis",
+      "name": "Parse Analysis JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 350],
+      "notesInFlow": true,
+      "notes": "Parse l'analyse de Claude"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM contacts WHERE phone = '{{ $('Merge Transcript').item.json.phone_from }}' LIMIT 1"
+      },
+      "id": "supabase-find-contact",
+      "name": "Find Contact by Phone",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1650, 250],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Cherche un contact existant par numéro de téléphone"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-contact-not-exists",
+      "name": "If Contact Not Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1850, 250],
+      "notesInFlow": true,
+      "notes": "Vérifie si contact existe"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "contacts",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "phone",
+              "value": "={{ $('Merge Transcript').item.json.phone_from }}"
+            },
+            {
+              "column": "email",
+              "value": "unknown@voice.lxstudio.ch"
+            },
+            {
+              "column": "language",
+              "value": "fr"
+            },
+            {
+              "column": "source",
+              "value": "voice"
+            }
+          ]
+        }
+      },
+      "id": "supabase-create-contact",
+      "name": "Create Contact",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2050, 150],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Crée un nouveau contact si n'existe pas"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "voice_calls",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "contact_id",
+              "value": "={{ $('If Contact Not Exists').item.json.id || $('Create Contact').item.json.id }}"
+            },
+            {
+              "column": "twilio_call_sid",
+              "value": "={{ $('Merge Transcript').item.json.call_sid }}"
+            },
+            {
+              "column": "phone_from",
+              "value": "={{ $('Merge Transcript').item.json.phone_from }}"
+            },
+            {
+              "column": "phone_to",
+              "value": "={{ $('Merge Transcript').item.json.phone_to }}"
+            },
+            {
+              "column": "direction",
+              "value": "={{ $('Merge Transcript').item.json.direction }}"
+            },
+            {
+              "column": "status",
+              "value": "={{ $('Merge Transcript').item.json.call_status }}"
+            },
+            {
+              "column": "transcript",
+              "value": "={{ $('Merge Transcript').item.json.transcript }}"
+            },
+            {
+              "column": "intent",
+              "value": "={{ $('Parse Analysis JSON').item.json.intent }}"
+            },
+            {
+              "column": "summary",
+              "value": "={{ $('Parse Analysis JSON').item.json.summary }}"
+            },
+            {
+              "column": "recording_url",
+              "value": "={{ $('Merge Transcript').item.json.recording_url }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-call",
+      "name": "Insert Voice Call",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2050, 350],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre l'appel dans Supabase"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{ $env.TWILIO_PHONE_NUMBER }}"
+            },
+            {
+              "name": "To",
+              "value": "={{ $('Merge Transcript').item.json.phone_from }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $('Parse Analysis JSON').item.json.suggested_response }}"
+            }
+          ]
+        }
+      },
+      "id": "twilio-send-sms",
+      "name": "Send SMS Recap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 250],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "twilio-lx-cred",
+          "name": "Twilio-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Envoie un SMS de récapitulation"
+    },
+    {
+      "parameters": {
+        "operation": "sendEmail",
+        "fromEmail": "contact@lxstudio.ch",
+        "toEmail": "contact@lxstudio.ch",
+        "subject": "Nouvel appel entrant - {{ $('Parse Analysis JSON').item.json.intent }}",
+        "emailFormat": "text",
+        "text": "=📞 NOUVEL APPEL ENTRANT\n\nDe : {{ $('Merge Transcript').item.json.phone_from }}\nVers : {{ $('Merge Transcript').item.json.phone_to }}\nStatut : {{ $('Merge Transcript').item.json.call_status }}\n\nINTENTION : {{ $('Parse Analysis JSON').item.json.intent }}\nURGENCE : {{ $('Parse Analysis JSON').item.json.urgency }}\nSENTIMENT : {{ $('Parse Analysis JSON').item.json.sentiment }}\n\nRÉSUMÉ :\n{{ $('Parse Analysis JSON').item.json.summary }}\n\nACTION REQUISE : {{ $('Parse Analysis JSON').item.json.action_required ? 'OUI - Rappel nécessaire' : 'Non - Suivi automatique' }}\n\nQUALITÉ LEAD : {{ $('Parse Analysis JSON').item.json.lead_quality }}\n\n---\nTRANSCRIPTION COMPLÈTE :\n{{ $('Merge Transcript').item.json.transcript }}\n\n---\nCall SID : {{ $('Merge Transcript').item.json.call_sid }}\nEnregistrement : {{ $('Merge Transcript').item.json.recording_url || 'Non disponible' }}",
+        "options": {}
+      },
+      "id": "smtp-send-recap",
+      "name": "Email Recap to Team",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2250, 450],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-lx-cred",
+          "name": "SMTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Envoie un récap par email à l'équipe"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "📞 *Nouvel appel entrant*\n\n*De:* {{ $('Merge Transcript').item.json.phone_from }}\n*Intent:* {{ $('Parse Analysis JSON').item.json.intent }}\n*Urgence:* {{ $('Parse Analysis JSON').item.json.urgency }}\n*Sentiment:* {{ $('Parse Analysis JSON').item.json.sentiment }}\n\n*Résumé:*\n{{ $('Parse Analysis JSON').item.json.summary }}\n\n{{ $('Parse Analysis JSON').item.json.action_required ? '⚠️ *ACTION REQUISE*' : '✅ Suivi automatique' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify",
+      "name": "Telegram Notify",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2450, 350],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Voice-Reception"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2250, 650],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log erreurs"
+    }
+  ],
+  "connections": {
+    "Webhook Twilio Inbound": {
+      "main": [
+        [
+          {
+            "node": "Parse Twilio Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Twilio Payload": {
+      "main": [
+        [
+          {
+            "node": "If Has Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Has Transcript": {
+      "main": [
+        [
+          {
+            "node": "Merge Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Twilio Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Twilio Transcription": {
+      "main": [
+        [
+          {
+            "node": "Merge Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Transcript": {
+      "main": [
+        [
+          {
+            "node": "Claude Analyze Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analyze Call": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis JSON": {
+      "main": [
+        [
+          {
+            "node": "Find Contact by Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Contact by Phone": {
+      "main": [
+        [
+          {
+            "node": "If Contact Not Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Contact Not Exists": {
+      "main": [
+        [
+          {
+            "node": "Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Voice Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Insert Voice Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Voice Call": {
+      "main": [
+        [
+          {
+            "node": "Send SMS Recap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Recap to Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send SMS Recap": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Recap to Team": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Core"
+    },
+    {
+      "name": "Voice"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": true
+}

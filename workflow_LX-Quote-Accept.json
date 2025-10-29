@@ -1,0 +1,611 @@
+{
+  "name": "LX-Quote-Accept",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lx/quote/accept",
+        "options": {},
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "webhook-quote-accept",
+      "name": "Webhook Quote Accept",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "lx-quote-accept",
+      "notesInFlow": true,
+      "notes": "Point d'entrée pour l'acceptation d'un devis (lien email)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Vérifie les paramètres et génère un hash de sécurité\nconst query = $json.query || {};\nconst leadId = query.lead_id;\nconst hash = query.hash;\n\nif (!leadId) {\n  throw new Error('Missing lead_id parameter');\n}\n\n// Vérification hash (optionnel pour sécurité)\nconst crypto = require('crypto');\nconst expectedHash = crypto\n  .createHash('sha256')\n  .update(`${leadId}:${process.env.HASH_SECRET || 'lx-studio-secret'}`)\n  .digest('hex')\n  .substring(0, 16);\n\n// Si hash fourni, le vérifier\nif (hash && hash !== expectedHash) {\n  throw new Error('Invalid security hash');\n}\n\nreturn {\n  json: {\n    lead_id: leadId,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "code-verify-params",
+      "name": "Verify Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "notesInFlow": true,
+      "notes": "Vérifie lead_id et hash de sécurité"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT q.*, l.contact_id, c.email, c.first_name, c.last_name\nFROM quotes q\nJOIN leads l ON q.lead_id = l.id\nJOIN contacts c ON l.contact_id = c.id\nWHERE l.id = '{{ $json.lead_id }}'\nAND q.status = 'sent'\nORDER BY q.created_at DESC\nLIMIT 1"
+      },
+      "id": "supabase-get-quote",
+      "name": "Get Quote Details",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Récupère les détails du devis et du contact"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-quote-exists",
+      "name": "If Quote Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "notesInFlow": true,
+      "notes": "Vérifie que le devis existe et est valide"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customer_email",
+              "value": "={{ $('Get Quote Details').item.json[0].email }}"
+            },
+            {
+              "name": "collection_method",
+              "value": "send_invoice"
+            },
+            {
+              "name": "days_until_due",
+              "value": "30"
+            },
+            {
+              "name": "metadata[quote_id]",
+              "value": "={{ $('Get Quote Details').item.json[0].id }}"
+            },
+            {
+              "name": "metadata[lead_id]",
+              "value": "={{ $('Verify Parameters').item.json.lead_id }}"
+            },
+            {
+              "name": "description",
+              "value": "Facture suite à acceptation devis {{ $('Get Quote Details').item.json[0].quote_number }}"
+            }
+          ]
+        }
+      },
+      "id": "stripe-create-invoice-draft",
+      "name": "Stripe Create Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 200],
+      "credentials": {
+        "stripeApi": {
+          "id": "stripe-lx-cred",
+          "name": "Stripe-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Crée une facture Stripe en mode draft"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/invoiceitems",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customer",
+              "value": "={{ $json.customer }}"
+            },
+            {
+              "name": "invoice",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "amount",
+              "value": "={{ $('Get Quote Details').item.json[0].amount_chf * 100 }}"
+            },
+            {
+              "name": "currency",
+              "value": "chf"
+            },
+            {
+              "name": "description",
+              "value": "Développement web - Devis {{ $('Get Quote Details').item.json[0].quote_number }}"
+            }
+          ]
+        }
+      },
+      "id": "stripe-add-line-item",
+      "name": "Add Invoice Line Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 200],
+      "credentials": {
+        "stripeApi": {
+          "id": "stripe-lx-cred",
+          "name": "Stripe-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Ajoute le montant à la facture"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/invoices/{{ $('Stripe Create Invoice').item.json.id }}/finalize",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "auto_advance",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "id": "stripe-finalize-invoice",
+      "name": "Finalize Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 200],
+      "credentials": {
+        "stripeApi": {
+          "id": "stripe-lx-cred",
+          "name": "Stripe-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Finalise la facture Stripe"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "invoices",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "quote_id",
+              "value": "={{ $('Get Quote Details').item.json[0].id }}"
+            },
+            {
+              "column": "stripe_invoice_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "column": "invoice_number",
+              "value": "={{ $json.number }}"
+            },
+            {
+              "column": "amount_chf",
+              "value": "={{ $('Get Quote Details').item.json[0].amount_chf }}"
+            },
+            {
+              "column": "currency",
+              "value": "CHF"
+            },
+            {
+              "column": "status",
+              "value": "open"
+            },
+            {
+              "column": "payment_url",
+              "value": "={{ $json.hosted_invoice_url }}"
+            },
+            {
+              "column": "due_date",
+              "value": "={{ new Date(Date.now() + 30*24*60*60*1000).toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-invoice",
+      "name": "Insert Invoice",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1650, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre la facture dans Supabase"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "quotes",
+        "filterType": "manual",
+        "matchBy": "id",
+        "value": "={{ $('Get Quote Details').item.json[0].id }}",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "status",
+              "value": "accepted"
+            },
+            {
+              "column": "accepted_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-update-quote",
+      "name": "Update Quote Status",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1650, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Marque le devis comme accepté"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filterType": "manual",
+        "matchBy": "id",
+        "value": "={{ $('Verify Parameters').item.json.lead_id }}",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "status",
+              "value": "converted"
+            },
+            {
+              "column": "converted_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-update-lead",
+      "name": "Update Lead Status",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1850, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Marque le lead comme converti"
+    },
+    {
+      "parameters": {
+        "operation": "sendEmail",
+        "fromEmail": "contact@lxstudio.ch",
+        "toEmail": "={{ $('Get Quote Details').item.json[0].email }}",
+        "subject": "Facture LX Studio n°{{ $('Finalize Invoice').item.json.number }} - Paiement",
+        "emailFormat": "text",
+        "text": "=Bonjour {{ $('Get Quote Details').item.json[0].first_name }},\n\nMerci d'avoir accepté notre devis !\n\nVoici votre facture pour le règlement :\n\n💳 Montant : {{ $('Get Quote Details').item.json[0].amount_chf }} CHF TTC\n📅 Échéance : {{ new Date(Date.now() + 30*24*60*60*1000).toLocaleDateString('fr-CH') }}\n\n👉 Procéder au paiement : {{ $('Finalize Invoice').item.json.hosted_invoice_url }}\n\nMoyens de paiement :\n- Carte bancaire (paiement sécurisé Stripe)\n- Virement bancaire (coordonnées sur la facture)\n\n📅 Prochaines étapes :\nDès réception de votre paiement, nous vous contacterons pour planifier le lancement du projet.\n\nMerci de votre confiance !\n\nCordialement,\nL'équipe LX Studio\n\n---\nLX Studio | Agence Web & Automatisation\nEmail: contact@lxstudio.ch | Web: lxstudio.ch\n📅 {{ $env.CALENDLY_LINK }}",
+        "options": {
+          "ccEmail": "contact@lxstudio.ch"
+        }
+      },
+      "id": "smtp-send-invoice",
+      "name": "Send Invoice Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1850, 200],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-lx-cred",
+          "name": "SMTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Envoie la facture par email"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "🎉 *DEVIS ACCEPTÉ !*\n\n*Client:* {{ $('Get Quote Details').item.json[0].first_name }} {{ $('Get Quote Details').item.json[0].last_name }}\n*Email:* {{ $('Get Quote Details').item.json[0].email }}\n*Montant:* {{ $('Get Quote Details').item.json[0].amount_chf }} CHF\n*Facture:* {{ $('Finalize Invoice').item.json.number }}\n\n💰 Lead converti avec succès !",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-success",
+      "name": "Telegram Notify Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2050, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram de succès"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"fr-CH\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Devis accepté - LX Studio</title>\n    <style>\n        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }\n        .container { max-width: 600px; margin: 0 auto; background: white; color: #333; padding: 40px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); }\n        .icon { font-size: 64px; margin-bottom: 20px; }\n        h1 { color: #28a745; margin: 20px 0; }\n        p { font-size: 18px; line-height: 1.6; }\n        .button { display: inline-block; background: #28a745; color: white !important; padding: 15px 30px; text-decoration: none; border-radius: 6px; margin-top: 20px; font-weight: 600; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"icon\">✅</div>\n        <h1>Devis accepté avec succès !</h1>\n        <p>Merci <strong>{{ $('Get Quote Details').item.json[0].first_name }}</strong> pour votre confiance.</p>\n        <p>Vous allez recevoir votre facture par email d'ici quelques instants.</p>\n        <p>Nous sommes impatients de travailler avec vous !</p>\n        <a href=\"mailto:contact@lxstudio.ch\" class=\"button\">Nous contacter</a>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "webhook-response-success",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2250, 300],
+      "notesInFlow": true,
+      "notes": "Page de confirmation affichée au prospect"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html>\n<html lang=\"fr-CH\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Erreur - LX Studio</title>\n    <style>\n        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }\n        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }\n        .icon { font-size: 64px; margin-bottom: 20px; }\n        h1 { color: #dc3545; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <div class=\"icon\">❌</div>\n        <h1>Devis introuvable</h1>\n        <p>Le lien que vous avez suivi n'est pas valide ou le devis a déjà été accepté.</p>\n        <p>Contactez-nous à <a href=\"mailto:contact@lxstudio.ch\">contact@lxstudio.ch</a></p>\n    </div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "webhook-response-error",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 500],
+      "notesInFlow": true,
+      "notes": "Page d'erreur si devis introuvable"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Quote-Accept"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error || 'Unknown error during quote acceptance' }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1850, 600],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log les erreurs"
+    }
+  ],
+  "connections": {
+    "Webhook Quote Accept": {
+      "main": [
+        [
+          {
+            "node": "Verify Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Parameters": {
+      "main": [
+        [
+          {
+            "node": "Get Quote Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Quote Details": {
+      "main": [
+        [
+          {
+            "node": "If Quote Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Quote Exists": {
+      "main": [
+        [
+          {
+            "node": "Stripe Create Invoice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Quote Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stripe Create Invoice": {
+      "main": [
+        [
+          {
+            "node": "Add Invoice Line Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Invoice Line Item": {
+      "main": [
+        [
+          {
+            "node": "Finalize Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Invoice": {
+      "main": [
+        [
+          {
+            "node": "Insert Invoice",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Invoice Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Invoice": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Quote Status": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Invoice Email": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Notify Success": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Core"
+    },
+    {
+      "name": "Quote"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": true
+}

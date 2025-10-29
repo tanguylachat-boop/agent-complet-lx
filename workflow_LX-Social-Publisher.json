@@ -1,0 +1,610 @@
+{
+  "name": "LX-Social-Publisher",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lx/social/publish",
+        "options": {}
+      },
+      "id": "webhook-social-publish",
+      "name": "Webhook Social Publish",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "lx-social-publish",
+      "notesInFlow": true,
+      "notes": "Webhook pour publier sur les réseaux sociaux (manuel ou depuis Blog-Auto)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse le payload entrant\nconst body = $json.body || $json;\n\nconst blogPostId = body.blog_post_id;\nconst blogTitle = body.blog_title || body.title;\nconst blogExcerpt = body.blog_excerpt || body.excerpt;\nconst blogUrl = body.blog_url || body.url;\n\nif (!blogTitle || !blogUrl) {\n  throw new Error('Missing required fields: blog_title and blog_url');\n}\n\nreturn {\n  json: {\n    blog_post_id: blogPostId,\n    blog_title: blogTitle,\n    blog_excerpt: blogExcerpt,\n    blog_url: blogUrl\n  }\n};"
+      },
+      "id": "code-parse-payload",
+      "name": "Parse Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "notesInFlow": true,
+      "notes": "Parse les données de l'article à promouvoir"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "model": "claude-3-5-haiku-20241022",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 4096
+        },
+        "text": "=Tu es un expert en social media marketing pour le marché B2B suisse.\nTon rôle est de transformer du contenu long (articles de blog) en posts courts et engageants pour différentes plateformes.\nTon audience : décideurs, entrepreneurs et professionnels du digital en Suisse romande.\n\nÀ partir de cet article de blog, crée 3 posts optimisés pour différentes plateformes :\n\nARTICLE SOURCE :\nTitre : {{ $json.blog_title }}\nContenu : {{ $json.blog_excerpt }}\nURL : {{ $json.blog_url }}\n\nPLATEFORMES CIBLES :\n1. **LinkedIn** (post professionnel)\n2. **Facebook/Instagram** (post visuel & engageant)\n3. **X/Twitter** (thread de 2-3 tweets)\n\nCONSIGNES GÉNÉRALES :\n- Ton professionnel mais authentique\n- Appel à l'action clair\n- Hashtags stratégiques (3-5 selon plateforme)\n- Émojis avec modération\n- Lien vers l'article source\n- Mention @LXStudio quand pertinent\n\nFORMAT DE RÉPONSE (JSON) :\n{\n  \"linkedin\": {\n    \"text\": \"Post LinkedIn complet (max 1300 caractères)\",\n    \"hashtags\": [\"#WebDev\", \"#SwissStartup\", \"#Automation\"],\n    \"cta\": \"Découvrez notre approche complète :\"\n  },\n  \"facebook_instagram\": {\n    \"text\": \"Post FB/IG complet (max 2200 caractères pour FB, ~125 pour IG caption)\",\n    \"hashtags\": [\"#WebAgency\", \"#Suisse\", \"#Digital\"],\n    \"cta\": \"Lien en bio ou commentaire\"\n  },\n  \"twitter\": {\n    \"thread\": [\n      \"Tweet 1 (hook, max 280 caractères)\",\n      \"Tweet 2 (insights, max 280 caractères)\",\n      \"Tweet 3 (CTA + lien, max 280 caractères)\"\n    ],\n    \"hashtags\": [\"#WebDev\", \"#Swiss\"]\n  }\n}\n\nRÈGLES SPÉCIFIQUES PAR PLATEFORME :\n\n**LinkedIn** :\n- Commencer par un hook (question, stat, ou affirmation forte)\n- 3-5 paragraphes courts\n- Partager un insight ou apprentissage\n- Ton expert mais humble\n- Hashtags : 3-5, pertinents et pas trop génériques\n\n**Facebook/Instagram** :\n- Visuel : suggérer type d'image (citation, infographie, photo)\n- Storytelling émotionnel\n- Ton plus accessible et chaleureux\n- Question finale pour engagement\n- Hashtags IG : 8-15 (mix popularité)\n\n**X/Twitter** :\n- Thread structuré : 1) Hook, 2) Insights, 3) CTA\n- Chaque tweet autonome mais connecté\n- Concision maximale\n- Hashtags : 2-3 max\n- Mention @LXStudio dans dernier tweet\n\nGénère maintenant les 3 posts."
+      },
+      "id": "anthropic-generate-posts",
+      "name": "Claude Generate Social Posts",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-lx-cred",
+          "name": "Anthropic-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Génère les posts adaptés à chaque plateforme"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse la réponse JSON de Claude\nconst claudeResponse = $json.output || $json.response || '{}';\nlet postsData;\n\ntry {\n  let cleanJson = claudeResponse;\n  if (typeof claudeResponse === 'string') {\n    cleanJson = claudeResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  }\n  postsData = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  throw new Error('Failed to parse Claude response: ' + e.message);\n}\n\nreturn { json: postsData };"
+      },
+      "id": "code-parse-posts",
+      "name": "Parse Posts JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "notesInFlow": true,
+      "notes": "Parse le JSON des posts générés"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/{{ $env.META_PAGE_ID }}/feed",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{ $env.META_ACCESS_TOKEN }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.facebook_instagram.text + '\\n\\n' + $json.facebook_instagram.hashtags.join(' ') + '\\n\\n' + $('Parse Payload').item.json.blog_url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-post-facebook",
+      "name": "Post to Facebook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "http-lx-cred",
+          "name": "HTTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie sur Facebook Page"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "author",
+              "value": "={{ $env.LINKEDIN_PERSON_URN }}"
+            },
+            {
+              "name": "lifecycleState",
+              "value": "PUBLISHED"
+            },
+            {
+              "name": "specificContent.com.linkedin.ugc.ShareContent.shareCommentary.text",
+              "value": "={{ $('Parse Posts JSON').item.json.linkedin.text + '\\n\\n' + $('Parse Posts JSON').item.json.linkedin.hashtags.join(' ') + '\\n\\n' + $('Parse Payload').item.json.blog_url }}"
+            },
+            {
+              "name": "specificContent.com.linkedin.ugc.ShareContent.shareMediaCategory",
+              "value": "ARTICLE"
+            },
+            {
+              "name": "visibility.com.linkedin.ugc.MemberNetworkVisibility",
+              "value": "PUBLIC"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-post-linkedin",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "http-lx-cred",
+          "name": "HTTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie sur LinkedIn"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth1Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Posts JSON').item.json.twitter.thread[0] + ' ' + $('Parse Posts JSON').item.json.twitter.hashtags.join(' ') }) }}",
+        "options": {}
+      },
+      "id": "http-post-twitter-1",
+      "name": "Post to X (Tweet 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "http-lx-cred",
+          "name": "HTTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie le premier tweet du thread"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth1Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Posts JSON').item.json.twitter.thread[1], reply: { in_reply_to_tweet_id: $('Post to X (Tweet 1)').item.json.data.id } }) }}",
+        "options": {}
+      },
+      "id": "http-post-twitter-2",
+      "name": "Post to X (Tweet 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "http-lx-cred",
+          "name": "HTTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie le deuxième tweet du thread"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth1Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parse Posts JSON').item.json.twitter.thread[2] + '\\n\\n' + $('Parse Payload').item.json.blog_url, reply: { in_reply_to_tweet_id: $json.data.id } }) }}",
+        "options": {}
+      },
+      "id": "http-post-twitter-3",
+      "name": "Post to X (Tweet 3)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "http-lx-cred",
+          "name": "HTTP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie le troisième tweet du thread avec lien"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "social_posts",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "blog_post_id",
+              "value": "={{ $('Parse Payload').item.json.blog_post_id }}"
+            },
+            {
+              "column": "platform",
+              "value": "facebook"
+            },
+            {
+              "column": "platform_post_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "column": "content",
+              "value": "={{ $('Parse Posts JSON').item.json.facebook_instagram.text }}"
+            },
+            {
+              "column": "hashtags",
+              "value": "={{ JSON.stringify($('Parse Posts JSON').item.json.facebook_instagram.hashtags) }}"
+            },
+            {
+              "column": "status",
+              "value": "published"
+            },
+            {
+              "column": "published_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-facebook",
+      "name": "Log Facebook Post",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre le post Facebook"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "social_posts",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "blog_post_id",
+              "value": "={{ $('Parse Payload').item.json.blog_post_id }}"
+            },
+            {
+              "column": "platform",
+              "value": "linkedin"
+            },
+            {
+              "column": "platform_post_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "column": "content",
+              "value": "={{ $('Parse Posts JSON').item.json.linkedin.text }}"
+            },
+            {
+              "column": "hashtags",
+              "value": "={{ JSON.stringify($('Parse Posts JSON').item.json.linkedin.hashtags) }}"
+            },
+            {
+              "column": "status",
+              "value": "published"
+            },
+            {
+              "column": "published_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-linkedin",
+      "name": "Log LinkedIn Post",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre le post LinkedIn"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "social_posts",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "blog_post_id",
+              "value": "={{ $('Parse Payload').item.json.blog_post_id }}"
+            },
+            {
+              "column": "platform",
+              "value": "twitter"
+            },
+            {
+              "column": "platform_post_id",
+              "value": "={{ $json.data.id }}"
+            },
+            {
+              "column": "content",
+              "value": "={{ $('Parse Posts JSON').item.json.twitter.thread.join(' | ') }}"
+            },
+            {
+              "column": "hashtags",
+              "value": "={{ JSON.stringify($('Parse Posts JSON').item.json.twitter.hashtags) }}"
+            },
+            {
+              "column": "status",
+              "value": "published"
+            },
+            {
+              "column": "published_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-twitter",
+      "name": "Log X/Twitter Thread",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1650, 500],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre le thread X/Twitter"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "📱 *Publications réseaux sociaux*\n\n*Article:* {{ $('Parse Payload').item.json.blog_title }}\n\n✅ Facebook: Publié\n✅ LinkedIn: Publié\n✅ X/Twitter: Thread publié (3 tweets)\n\n*URL:* {{ $('Parse Payload').item.json.blog_url }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-success",
+      "name": "Telegram Notify Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1850, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram de succès"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Social-Publisher"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1850, 600],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log erreurs"
+    }
+  ],
+  "connections": {
+    "Webhook Social Publish": {
+      "main": [
+        [
+          {
+            "node": "Parse Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Payload": {
+      "main": [
+        [
+          {
+            "node": "Claude Generate Social Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Generate Social Posts": {
+      "main": [
+        [
+          {
+            "node": "Parse Posts JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Posts JSON": {
+      "main": [
+        [
+          {
+            "node": "Post to Facebook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post to X (Tweet 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Facebook": {
+      "main": [
+        [
+          {
+            "node": "Log Facebook Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Log LinkedIn Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to X (Tweet 1)": {
+      "main": [
+        [
+          {
+            "node": "Post to X (Tweet 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to X (Tweet 2)": {
+      "main": [
+        [
+          {
+            "node": "Post to X (Tweet 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to X (Tweet 3)": {
+      "main": [
+        [
+          {
+            "node": "Log X/Twitter Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Facebook Post": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log LinkedIn Post": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log X/Twitter Thread": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Content"
+    },
+    {
+      "name": "Social"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 1,
+  "active": true
+}

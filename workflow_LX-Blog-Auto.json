@@ -1,0 +1,388 @@
+{
+  "name": "LX-Blog-Auto",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-weekly",
+      "name": "Cron Weekly Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "notesInFlow": true,
+      "notes": "Déclenché chaque semaine pour générer un article automatiquement"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lx/blog/generate",
+        "options": {}
+      },
+      "id": "webhook-manual-trigger",
+      "name": "Webhook Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 450],
+      "webhookId": "lx-blog-generate",
+      "notesInFlow": true,
+      "notes": "Permet de déclencher manuellement la génération d'article"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Génère un brief SEO pour l'article\nconst topics = [\n  { sector: 'PME', geo: 'Vaud', keywords: ['site web PME Vaud', 'création site internet Lausanne', 'agence web Vaud'], intent: 'commercial' },\n  { sector: 'E-commerce', geo: 'Genève', keywords: ['boutique en ligne Genève', 'e-commerce Suisse', 'vente en ligne Genève'], intent: 'commercial' },\n  { sector: 'Startup', geo: 'Romandie', keywords: ['startup digitale Suisse', 'MVP développement', 'tech startup Romandie'], intent: 'informatif' },\n  { sector: 'Automatisation', geo: 'Suisse romande', keywords: ['automatisation workflow', 'n8n Suisse', 'processus automatisation'], intent: 'informatif' },\n  { sector: 'SEO', geo: 'Lausanne', keywords: ['référencement Lausanne', 'SEO local Suisse', 'visibilité Google Suisse'], intent: 'informatif' }\n];\n\n// Sélection aléatoire d'un topic\nconst selectedTopic = topics[Math.floor(Math.random() * topics.length)];\n\nreturn {\n  json: {\n    sector: selectedTopic.sector,\n    geo: selectedTopic.geo,\n    keywords: selectedTopic.keywords,\n    intent: selectedTopic.intent,\n    generation_date: new Date().toISOString()\n  }\n};"
+      },
+      "id": "code-generate-brief",
+      "name": "Generate SEO Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 350],
+      "notesInFlow": true,
+      "notes": "Génère un brief SEO pour l'article (topic, mots-clés, etc.)"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "model": "claude-3-5-sonnet-20241022",
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 8192
+        },
+        "text": "=Tu es un expert en content marketing et SEO pour le marché suisse romand (Suisse francophone).\nTu crées du contenu optimisé SEO pour LX Studio, agence web spécialisée en développement et automatisation.\nTon audience : PME, startups et entrepreneurs en Suisse romande (Vaud, Genève, Neuchâtel, Valais, Fribourg, Jura).\n\nCrée un article de blog complet et optimisé SEO sur le sujet suivant :\n\nBRIEF :\n- Secteur cible : {{ $json.sector }}\n- Région : {{ $json.geo }} (Suisse romande)\n- Mots-clés principaux : {{ $json.keywords.join(', ') }}\n- Intention : {{ $json.intent }} (informatif, commercial, transactionnel)\n\nSTRUCTURE ATTENDUE :\n1. **Titre H1** (60-70 caractères, avec mot-clé principal)\n2. **Chapeau** (150-200 mots, hook + promesse de valeur)\n3. **Plan de l'article** (4-6 sections H2 + sous-sections H3)\n4. **Développement** (1200-1800 mots total)\n5. **Conclusion + CTA** (call-to-action vers contact@lxstudio.ch ou calendly)\n6. **Meta description** (150-160 caractères)\n7. **URL slug** (optimisé, sans accents)\n\nEXIGENCES SEO :\n- Densité mot-clé principal : 1-2%\n- Mots-clés LSI (sémantiquement proches) : au moins 5\n- Lisibilité : phrases courtes, paragraphes de 3-4 lignes max\n- Ancres internes : suggérer 2-3 liens vers autres pages LX Studio\n- Rich snippet : proposer un schema.org (Article, HowTo, ou FAQPage)\n\nSTYLE & TON :\n- Français de Suisse (CHF, pas €)\n- Ton expert mais accessible\n- Exemples concrets du contexte suisse romand\n- Éviter le jargon technique excessif\n- Appel à l'action naturel et non intrusif\n\nLIVRABLES :\nRéponds en JSON avec cette structure :\n{\n  \"title\": \"Titre H1 optimisé\",\n  \"slug\": \"url-slug-optimise\",\n  \"meta_description\": \"Meta description 150-160 caractères\",\n  \"content_markdown\": \"Article complet en Markdown\",\n  \"keywords\": [\"array\", \"de\", \"mots\", \"clés\"],\n  \"schema_org\": { \"JSON-LD schema.org\" },\n  \"internal_links\": [\"array\", \"de\", \"suggestions\"],\n  \"estimated_read_time\": 7\n}\n\nGénère maintenant l'article complet."
+      },
+      "id": "anthropic-generate-article",
+      "name": "Claude Generate Article",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [650, 350],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-lx-cred",
+          "name": "Anthropic-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Génération de l'article via Claude Sonnet (haute qualité)"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse la réponse JSON de Claude\nconst claudeResponse = $json.output || $json.response || '{}';\nlet articleData;\n\ntry {\n  let cleanJson = claudeResponse;\n  if (typeof claudeResponse === 'string') {\n    cleanJson = claudeResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  }\n  articleData = typeof cleanJson === 'string' ? JSON.parse(cleanJson) : cleanJson;\n} catch (e) {\n  throw new Error('Failed to parse Claude response: ' + e.message);\n}\n\nreturn { json: articleData };"
+      },
+      "id": "code-parse-article",
+      "name": "Parse Article JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 350],
+      "notesInFlow": true,
+      "notes": "Parse le JSON retourné par Claude"
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "title": "={{ $json.title }}",
+        "content": "={{ $json.content_markdown }}",
+        "additionalFields": {
+          "status": "publish",
+          "excerpt": "={{ $json.meta_description }}",
+          "slug": "={{ $json.slug }}"
+        }
+      },
+      "id": "wordpress-create-post",
+      "name": "WordPress Create Post",
+      "type": "n8n-nodes-base.wordpress",
+      "typeVersion": 1,
+      "position": [1050, 350],
+      "credentials": {
+        "wordpressApi": {
+          "id": "wordpress-lx-cred",
+          "name": "WP-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Publie l'article sur WordPress"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "blog_posts",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "wp_post_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "column": "title",
+              "value": "={{ $('Parse Article JSON').item.json.title }}"
+            },
+            {
+              "column": "slug",
+              "value": "={{ $('Parse Article JSON').item.json.slug }}"
+            },
+            {
+              "column": "content",
+              "value": "={{ $('Parse Article JSON').item.json.content_markdown }}"
+            },
+            {
+              "column": "excerpt",
+              "value": "={{ $('Parse Article JSON').item.json.meta_description }}"
+            },
+            {
+              "column": "language",
+              "value": "fr"
+            },
+            {
+              "column": "seo_keywords",
+              "value": "={{ JSON.stringify($('Parse Article JSON').item.json.keywords) }}"
+            },
+            {
+              "column": "status",
+              "value": "published"
+            },
+            {
+              "column": "published_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "id": "supabase-insert-blog-post",
+      "name": "Insert Blog Post",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1250, 350],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Enregistre l'article dans Supabase"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.google.com/ping?sitemap={{ encodeURIComponent($env.SITEMAP_URL || 'https://lxstudio.ch/sitemap.xml') }}",
+        "options": {}
+      },
+      "id": "http-ping-sitemap",
+      "name": "Ping Sitemap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 250],
+      "notesInFlow": true,
+      "notes": "Notifie Google du nouveau contenu"
+    },
+    {
+      "parameters": {
+        "workflowId": "={{ $workflow.id }}",
+        "mode": "workflow",
+        "workflowSelector": "name",
+        "workflowName": "LX-Social-Publisher"
+      },
+      "id": "execute-social-workflow",
+      "name": "Trigger Social Publishing",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1450, 450],
+      "notesInFlow": true,
+      "notes": "Déclenche la publication sur les réseaux sociaux"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "📝 *Nouvel article publié*\n\n*Titre:* {{ $('Parse Article JSON').item.json.title }}\n*URL:* {{ $env.WP_URL || 'https://lxstudio.ch' }}/{{ $('Parse Article JSON').item.json.slug }}\n*Mots-clés:* {{ $('Parse Article JSON').item.json.keywords.join(', ') }}\n*Lecture:* ~{{ $('Parse Article JSON').item.json.estimated_read_time }} min\n\n✅ Publication réussie + Social en cours",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "telegram-notify-success",
+      "name": "Telegram Notify Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1650, 350],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-lx-cred",
+          "name": "Telegram-LX"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Notification Telegram de succès"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableId": "errors",
+        "columnsUi": {
+          "columnValues": [
+            {
+              "column": "workflow_name",
+              "value": "LX-Blog-Auto"
+            },
+            {
+              "column": "execution_id",
+              "value": "={{ $execution.id }}"
+            },
+            {
+              "column": "error_message",
+              "value": "={{ $json.error }}"
+            },
+            {
+              "column": "severity",
+              "value": "error"
+            }
+          ]
+        }
+      },
+      "id": "supabase-log-error",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1450, 600],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-lx-cred",
+          "name": "Supabase-LX"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notesInFlow": true,
+      "notes": "Log erreurs"
+    }
+  ],
+  "connections": {
+    "Cron Weekly Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate SEO Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate SEO Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate SEO Brief": {
+      "main": [
+        [
+          {
+            "node": "Claude Generate Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Generate Article": {
+      "main": [
+        [
+          {
+            "node": "Parse Article JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Article JSON": {
+      "main": [
+        [
+          {
+            "node": "WordPress Create Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress Create Post": {
+      "main": [
+        [
+          {
+            "node": "Insert Blog Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Blog Post": {
+      "main": [
+        [
+          {
+            "node": "Ping Sitemap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Trigger Social Publishing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ping Sitemap": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Social Publishing": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notify Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "Log Error"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "LX-Content"
+    },
+    {
+      "name": "Blog"
+    }
+  ],
+  "pinData": {},
+  "versionId": "1",
+  "triggerCount": 2,
+  "active": true
+}
