@@ -1,0 +1,45 @@
+{
+  "site_vitrine": {
+    "base": 2500,
+    "per_page": 300,
+    "cms": 800,
+    "seo_base": 500,
+    "forms": 400,
+    "responsive": 0,
+    "multilingual": 600
+  },
+  "ecommerce": {
+    "base": 5000,
+    "per_product_category": 500,
+    "payment_integration": 800,
+    "shipping": 600,
+    "inventory": 400,
+    "customer_account": 300
+  },
+  "seo": {
+    "audit": 800,
+    "onpage_monthly": 600,
+    "content_monthly": 400,
+    "backlinks_monthly": 800,
+    "technical_seo": 700,
+    "local_seo": 500
+  },
+  "agent_ia": {
+    "email_automation": 1500,
+    "crm_integration": 1200,
+    "chatbot": 2000,
+    "custom_workflow": 2500,
+    "data_extraction": 1000,
+    "api_integration": 800
+  },
+  "maintenance": {
+    "basic_monthly": 150,
+    "standard_monthly": 300,
+    "premium_monthly": 600
+  },
+  "vat_rate": 0.077,
+  "deposit_percentage": 0.30,
+  "default_currency": "CHF",
+  "default_validity_days": 30,
+  "estimated_hours_per_1000chf": 8
+}

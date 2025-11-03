@@ -240,6 +240,87 @@ Activez REST API :
 
 ---
 
+### 2bis. Agent Email Intelligent (Nouveau ⭐)
+
+**Trigger** : IMAP (lecture automatique des emails non lus sur contact@lxstudio.ch)
+
+**Description** : Agent conversationnel IA qui gère toutes les demandes entrantes de manière autonome avec réponses multilingues, extraction de données structurées, et génération automatique de devis PDF.
+
+**Flow complet** :
+1. **IMAP Trigger** : Lecture emails non lus
+2. **Normalisation** : Extraction corps, expéditeur, sujet, messageId
+3. **Orchestrateur IA (Claude)** :
+   - Classification d'intention (info/devis/support/autre)
+   - Extraction complète des données lead
+   - Détection de langue (FR/EN/DE/IT)
+   - Calcul de complétude des informations
+   - Génération de questions ciblées si incomplet
+   - Rédaction d'un brouillon de réponse personnalisé
+4. **Upsert Lead DB** : Journalisation Supabase
+5. **Switch par intention** :
+   - **Info** → Réponse directe avec infos tarifs/process
+   - **Devis** → Branche conditionnelle (complet/incomplet)
+   - **Support** → Route vers équipe technique
+   - **Autre** → Réponse polie/redirection
+6. **Branche Devis Complet** (`can_quote_now = true`) :
+   - Calcul détaillé du devis selon grille de prix
+   - Génération HTML → PDF professionnel
+   - Envoi email avec PDF en pièce jointe
+   - Update status → `quoted`
+7. **Branche Devis Incomplet** (`can_quote_now = false`) :
+   - Envoi email avec questions ciblées (3-6)
+   - Update status → `waiting_user`
+   - Attente réponse client (via In-Reply-To tracking)
+   - Boucle jusqu'à informations complètes
+
+**Caractéristiques uniques** :
+- ✅ **Conversations itératives** : Pose des questions jusqu'à avoir toutes les infos
+- ✅ **Multilingue natif** : Répond dans la langue du client (FR/EN/DE/IT)
+- ✅ **PDF professionnel** : Génération avec template HTML/CSS personnalisable
+- ✅ **Température IA = 0** : Réponses déterministes et cohérentes
+- ✅ **JSON strict** : Pas de texte libre, uniquement données structurées
+- ✅ **Grille de prix éditable** : `templates/pricing-config.json`
+- ✅ **Thread tracking** : Hash unique pour suivre conversations
+- ✅ **CRM complet** : Historique, statuts, complétude
+
+**Configuration & Installation détaillée** :
+📖 **[Guide complet : docs/EMAIL_AGENT_SETUP.md](docs/EMAIL_AGENT_SETUP.md)**
+
+**Fichiers du workflow** :
+- `workflows/email-agent-intelligent.json` : Workflow n8n principal
+- `templates/pricing-config.json` : Grille de prix éditable
+- `docs/EMAIL_AGENT_SETUP.md` : Installation, configuration, tests
+
+**Scénarios de test** :
+1. ✉️ **Info simple** : "Quels sont vos tarifs ?" → Réponse automatique avec fourchettes
+2. ✉️ **Devis incomplet** : "Je veux un site 5 pages" → Questions ciblées (budget, délai, fonctionnalités)
+3. ✉️ **Devis complet** : Description + budget/délai → PDF généré et envoyé immédiatement
+4. ✉️ **Support** : "Mon site ne fonctionne plus" → Route vers support technique
+5. 🌍 **Multilingue** : Email en anglais → Réponse en anglais, devis en anglais
+
+**Grille de prix par défaut** :
+- Site vitrine : 2'500 CHF base + 300 CHF/page + options (CMS 800, SEO 500, Formulaires 400)
+- E-commerce : 5'000 CHF base + intégrations paiement/shipping
+- SEO : Audit 800 CHF + forfaits mensuels (on-page 600, contenu 400, backlinks 800)
+- Agents IA : Email automation 1'500 CHF, CRM 1'200, Chatbot 2'000, Workflow custom 2'500
+
+**Base de données Supabase** :
+Table `leads` étendue avec champs :
+- `completeness_score` : Pourcentage d'infos collectées (0-1)
+- `can_quote_now` : Booléen pour déclencher génération devis
+- `questions_sent` : JSONB historique questions posées
+- `quote_number` : Numéro devis généré
+- `quote_amount` : Montant TTC
+- `quote_sent_at` : Timestamp envoi
+
+**Prochaines améliorations** :
+- 🔄 Boucle de réponse automatique (détection In-Reply-To)
+- 💳 Intégration Stripe Payment Links (acompte 30%)
+- 📊 Dashboard analytics (taux conversion, délai moyen réponse)
+- 🔔 Validation humaine optionnelle avant envoi devis
+
+---
+
 ### 3. LX-Quote-Accept
 
 **Trigger** : Webhook GET `/webhook/lx/quote/accept?lead_id={UUID}`

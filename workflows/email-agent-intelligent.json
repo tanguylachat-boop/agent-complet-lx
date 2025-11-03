@@ -1,0 +1,653 @@
+{
+  "name": "Agent Email Intelligent LX Studio",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "options": {
+          "customEmailConfig": "={{ \"search\": [\"UNSEEN\", [\"TO\", \"contact@lxstudio.ch\"]] }}"
+        }
+      },
+      "id": "imap-trigger",
+      "name": "IMAP Email Trigger",
+      "type": "n8n-nodes-base.imapTrigger",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "credentials": {
+        "imap": {
+          "id": "{{IMAP_ACCOUNT}}",
+          "name": "IMAP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "body",
+              "name": "body",
+              "value": "={{ $json.text || $json.textPlain || $json.textSimple || $json.textHtml || $json.html || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "from",
+              "name": "from",
+              "value": "={{ $json.from.address || $json.from }}",
+              "type": "string"
+            },
+            {
+              "id": "subject",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "messageId",
+              "name": "messageId",
+              "value": "={{ $json.messageId }}",
+              "type": "string"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "value": "={{ $json.date }}",
+              "type": "string"
+            },
+            {
+              "id": "inReplyTo",
+              "name": "inReplyTo",
+              "value": "={{ $json.inReplyTo || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "references",
+              "name": "references",
+              "value": "={{ $json.references || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-email",
+      "name": "Normalize Email Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 4096,\n  \"temperature\": 0,\n  \"system\": \"Tu es l'agent email intelligent de LX Studio (agence web, SEO, agents IA). Tu DOIS renvoyer STRICTEMENT un objet JSON valide, une seule ligne, sans texte avant/après, sans markdown.\\n\\nStructure JSON à retourner:\\n{\\n  \\\"lead\\\": {\\n    \\\"nom\\\": \\\"\\\",\\n    \\\"prenom\\\": \\\"\\\",\\n    \\\"email\\\": \\\"\\\",\\n    \\\"telephone\\\": \\\"\\\",\\n    \\\"entreprise\\\": \\\"\\\",\\n    \\\"service_demande\\\": \\\"\\\",\\n    \\\"description_projet\\\": \\\"\\\",\\n    \\\"budget_montant\\\": null,\\n    \\\"budget_devise\\\": \\\"CHF\\\",\\n    \\\"delai_souhaite\\\": \\\"\\\"\\n  },\\n  \\\"completeness_score\\\": 0.0,\\n  \\\"missing_fields\\\": [],\\n  \\\"questions\\\": [],\\n  \\\"can_quote_now\\\": false,\\n  \\\"intent\\\": \\\"info|devis|support|autre\\\",\\n  \\\"language\\\": \\\"fr|en|de|it\\\",\\n  \\\"thread_key\\\": \\\"\\\",\\n  \\\"reply_draft\\\": \\\"\\\"\\n}\\n\\nRègles:\\n1. intent = info (demande infos/tarifs), devis (chiffrage), support (client existant), autre (spam/hors sujet)\\n2. completeness_score = % de champs lead remplis (0-1)\\n3. can_quote_now = true si description claire + (budget_montant OU delai_souhaite). Sinon false\\n4. Si can_quote_now=false, génère 3-6 questions[] ciblées pour compléter\\n5. thread_key = hash simple de from+subject (ex: md5 ou juste from_subject)\\n6. language = langue détectée (fr/en/de/it)\\n7. reply_draft = email HTML professionnel dans la langue détectée, avec signature LX Studio, CTA calendrier si pertinent\\n8. Extrait TOUTES les infos possibles du corps de l'email\\n\\nSignature email:\\n<br><br>—<br><strong>Tanguy</strong>, LX Studio<br>Sites web • SEO • Agents IA<br>📧 contact@lxstudio.ch | 🌐 {{$env.SITE_URL}}<br>📞 {{$env.TEL}}<br><a href='{{$env.CAL_URL}}'>📅 Réserver un appel 15min</a>\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Email reçu:\\n\\nDe: {{ $json.from }}\\nSujet: {{ $json.subject }}\\nCorps:\\n{{ $json.body }}\\n\\nAnalyse cet email et renvoie le JSON strict demandé.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "anthropic-orchestrator",
+      "name": "Anthropic Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "{{ANTHROPIC_CREDENTIAL}}",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Anthropic response and extract JSON\nconst items = [];\n\nfor (const item of $input.all()) {\n  try {\n    const content = item.json.content;\n    let textContent = '';\n    \n    if (Array.isArray(content) && content.length > 0) {\n      textContent = content[0].text || '';\n    } else if (typeof content === 'string') {\n      textContent = content;\n    }\n    \n    // Clean potential markdown code blocks\n    textContent = textContent.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    \n    // Extract first valid JSON object\n    const jsonMatch = textContent.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      const parsed = JSON.parse(jsonMatch[0]);\n      \n      // Add original email data\n      parsed.original_from = $('Normalize Email Data').item.json.from;\n      parsed.original_subject = $('Normalize Email Data').item.json.subject;\n      parsed.original_messageId = $('Normalize Email Data').item.json.messageId;\n      parsed.original_date = $('Normalize Email Data').item.json.date;\n      parsed.original_body = $('Normalize Email Data').item.json.body;\n      \n      // Generate thread_key if missing\n      if (!parsed.thread_key) {\n        const crypto = require('crypto');\n        parsed.thread_key = crypto\n          .createHash('md5')\n          .update(parsed.original_from + parsed.original_subject)\n          .digest('hex').substring(0, 16);\n      }\n      \n      items.push({ json: parsed });\n    } else {\n      throw new Error('No valid JSON found in response');\n    }\n  } catch (error) {\n    // Fallback: create minimal structure\n    items.push({\n      json: {\n        intent: 'autre',\n        language: 'fr',\n        can_quote_now: false,\n        error: error.message,\n        reply_draft: '<p>Merci pour votre message. Nous reviendrons vers vous rapidement.</p>',\n        original_from: $('Normalize Email Data').item.json.from,\n        original_subject: $('Normalize Email Data').item.json.subject,\n        original_messageId: $('Normalize Email Data').item.json.messageId\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "id": "parse-anthropic",
+      "name": "Parse Anthropic Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"thread_key\": \"{{ $json.thread_key }}\",\n  \"email\": \"{{ $json.lead.email || $json.original_from }}\",\n  \"nom\": \"{{ $json.lead.nom }}\",\n  \"prenom\": \"{{ $json.lead.prenom }}\",\n  \"telephone\": \"{{ $json.lead.telephone }}\",\n  \"entreprise\": \"{{ $json.lead.entreprise }}\",\n  \"service_demande\": \"{{ $json.lead.service_demande }}\",\n  \"description_projet\": \"{{ $json.lead.description_projet }}\",\n  \"budget_montant\": {{ $json.lead.budget_montant || null }},\n  \"budget_devise\": \"{{ $json.lead.budget_devise || 'CHF' }}\",\n  \"delai_souhaite\": \"{{ $json.lead.delai_souhaite }}\",\n  \"intent\": \"{{ $json.intent }}\",\n  \"language\": \"{{ $json.language }}\",\n  \"status\": \"open\",\n  \"completeness_score\": {{ $json.completeness_score || 0 }},\n  \"can_quote_now\": {{ $json.can_quote_now }},\n  \"last_message_id\": \"{{ $json.original_messageId }}\",\n  \"last_reply_draft\": {{ JSON.stringify($json.reply_draft) }},\n  \"updated_at\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "upsert-lead-db",
+      "name": "Upsert Lead to DB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{SUPABASE_CRED}}",
+          "name": "Supabase Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "operation": "equals",
+                    "value2": "info"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "info"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "operation": "equals",
+                    "value2": "devis"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "devis"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "value1": "={{ $json.intent }}",
+                    "operation": "equals",
+                    "value2": "support"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "support"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch-intent",
+      "name": "Switch by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'contact@lxstudio.ch' }}",
+        "toEmail": "={{ $json.lead.email || $json.original_from }}",
+        "subject": "={{ $json.language === 'en' ? 'About LX Studio Services' : $json.language === 'de' ? 'Über LX Studio Dienstleistungen' : $json.language === 'it' ? 'Informazioni sui servizi LX Studio' : 'Informations LX Studio' }}",
+        "emailType": "html",
+        "message": "={{ $json.reply_draft }}",
+        "options": {}
+      },
+      "id": "send-info-email",
+      "name": "Send Info Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1560, 100],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_ACCOUNT}}",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "value1": "={{ $json.can_quote_now }}",
+              "operation": "boolean",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-quote-ready",
+      "name": "Can Quote Now?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate detailed quote based on pricing rules\nconst items = [];\n\nfor (const item of $input.all()) {\n  const lead = item.json.lead || {};\n  const service = (lead.service_demande || '').toLowerCase();\n  const description = (lead.description_projet || '').toLowerCase();\n  const budget = lead.budget_montant || 0;\n  \n  // Pricing grid (easy to edit)\n  const pricing = {\n    \"site_vitrine\": {\n      \"base\": 2500,\n      \"per_page\": 300,\n      \"cms\": 800,\n      \"seo_base\": 500,\n      \"forms\": 400\n    },\n    \"ecommerce\": {\n      \"base\": 5000,\n      \"per_product_category\": 500,\n      \"payment_integration\": 800,\n      \"shipping\": 600\n    },\n    \"seo\": {\n      \"audit\": 800,\n      \"onpage_monthly\": 600,\n      \"content_monthly\": 400,\n      \"backlinks_monthly\": 800\n    },\n    \"agent_ia\": {\n      \"email_automation\": 1500,\n      \"crm_integration\": 1200,\n      \"chatbot\": 2000,\n      \"custom_workflow\": 2500\n    }\n  };\n  \n  const lines = [];\n  let subtotal = 0;\n  \n  // Auto-detect service and build quote\n  if (service.includes('site') || service.includes('web') || description.includes('site')) {\n    // Site vitrine detected\n    const pages = parseInt(description.match(/(\\d+)\\s*page/i)?.[1] || '5');\n    lines.push({\n      description: `Site vitrine (${pages} pages)`,\n      quantity: 1,\n      unit_price: pricing.site_vitrine.base + (pages * pricing.site_vitrine.per_page),\n      total: pricing.site_vitrine.base + (pages * pricing.site_vitrine.per_page)\n    });\n    \n    if (description.includes('cms') || description.includes('wordpress')) {\n      lines.push({\n        description: 'CMS / Administration',\n        quantity: 1,\n        unit_price: pricing.site_vitrine.cms,\n        total: pricing.site_vitrine.cms\n      });\n    }\n    \n    if (description.includes('seo') || service.includes('seo')) {\n      lines.push({\n        description: 'SEO de base (optimisation on-page)',\n        quantity: 1,\n        unit_price: pricing.site_vitrine.seo_base,\n        total: pricing.site_vitrine.seo_base\n      });\n    }\n    \n    if (description.includes('formulaire') || description.includes('contact')) {\n      lines.push({\n        description: 'Formulaires personnalisés',\n        quantity: 1,\n        unit_price: pricing.site_vitrine.forms,\n        total: pricing.site_vitrine.forms\n      });\n    }\n  }\n  \n  if (service.includes('seo') && !service.includes('site')) {\n    lines.push({\n      description: 'Audit SEO complet',\n      quantity: 1,\n      unit_price: pricing.seo.audit,\n      total: pricing.seo.audit\n    });\n    \n    if (description.includes('mensuel') || description.includes('monthly') || description.includes('recurring')) {\n      lines.push({\n        description: 'Optimisation on-page (mensuel)',\n        quantity: 3,\n        unit_price: pricing.seo.onpage_monthly,\n        total: pricing.seo.onpage_monthly * 3\n      });\n    }\n  }\n  \n  if (service.includes('agent') || service.includes('ia') || service.includes('automation')) {\n    if (description.includes('email') || description.includes('mail')) {\n      lines.push({\n        description: 'Agent IA Email (workflow complet)',\n        quantity: 1,\n        unit_price: pricing.agent_ia.email_automation,\n        total: pricing.agent_ia.email_automation\n      });\n    }\n    \n    if (description.includes('crm')) {\n      lines.push({\n        description: 'Intégration CRM',\n        quantity: 1,\n        unit_price: pricing.agent_ia.crm_integration,\n        total: pricing.agent_ia.crm_integration\n      });\n    }\n    \n    if (description.includes('chatbot') || description.includes('chat')) {\n      lines.push({\n        description: 'Chatbot IA personnalisé',\n        quantity: 1,\n        unit_price: pricing.agent_ia.chatbot,\n        total: pricing.agent_ia.chatbot\n      });\n    }\n    \n    if (!lines.length) {\n      // Default automation workflow\n      lines.push({\n        description: 'Workflow d\\'automatisation personnalisé',\n        quantity: 1,\n        unit_price: pricing.agent_ia.custom_workflow,\n        total: pricing.agent_ia.custom_workflow\n      });\n    }\n  }\n  \n  // Fallback if no service detected\n  if (lines.length === 0) {\n    lines.push({\n      description: 'Projet sur mesure',\n      quantity: 1,\n      unit_price: Math.max(budget * 0.8, 2000),\n      total: Math.max(budget * 0.8, 2000)\n    });\n  }\n  \n  // Calculate totals\n  subtotal = lines.reduce((sum, line) => sum + line.total, 0);\n  const tva_rate = 0.077; // 7.7% Swiss VAT\n  const tva_amount = subtotal * tva_rate;\n  const total_ttc = subtotal + tva_amount;\n  \n  // Delivery time estimation\n  const delai = lead.delai_souhaite || 'À déterminer';\n  const estimated_weeks = Math.ceil(subtotal / 800); // ~800 CHF/week\n  \n  // Quote object\n  const quote = {\n    quote_number: `LXS-${Date.now().toString().slice(-8)}`,\n    date: new Date().toISOString().split('T')[0],\n    client: {\n      nom: lead.nom || '',\n      prenom: lead.prenom || '',\n      entreprise: lead.entreprise || '',\n      email: lead.email,\n      telephone: lead.telephone || ''\n    },\n    lines: lines,\n    subtotal_ht: subtotal.toFixed(2),\n    tva_rate: (tva_rate * 100).toFixed(1),\n    tva_amount: tva_amount.toFixed(2),\n    total_ttc: total_ttc.toFixed(2),\n    devise: lead.budget_devise || 'CHF',\n    delai_souhaite: delai,\n    delai_estime: `${estimated_weeks} semaines`,\n    validite: '30 jours',\n    conditions: [\n      'Acompte de 30% à la commande',\n      'Solde à la livraison',\n      'Délai de paiement: 15 jours net',\n      'Support 3 mois inclus'\n    ],\n    description_projet: lead.description_projet || ''\n  };\n  \n  items.push({\n    json: {\n      ...item.json,\n      quote: quote\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "calculate-quote",
+      "name": "Calculate Quote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate HTML for PDF quote\nconst items = [];\n\nfor (const item of $input.all()) {\n  const quote = item.json.quote;\n  const language = item.json.language || 'fr';\n  \n  // Multi-language labels\n  const labels = {\n    fr: {\n      quote_title: 'DEVIS',\n      quote_number: 'Devis N°',\n      date: 'Date',\n      client: 'Client',\n      description: 'Description',\n      quantity: 'Qté',\n      unit_price: 'Prix unit.',\n      total: 'Total',\n      subtotal: 'Sous-total HT',\n      vat: 'TVA',\n      total_ttc: 'Total TTC',\n      delivery: 'Délai estimé',\n      validity: 'Validité',\n      conditions: 'Conditions',\n      signature: 'Signature et cachet'\n    },\n    en: {\n      quote_title: 'QUOTATION',\n      quote_number: 'Quote No.',\n      date: 'Date',\n      client: 'Client',\n      description: 'Description',\n      quantity: 'Qty',\n      unit_price: 'Unit Price',\n      total: 'Total',\n      subtotal: 'Subtotal (excl. VAT)',\n      vat: 'VAT',\n      total_ttc: 'Total (incl. VAT)',\n      delivery: 'Estimated delivery',\n      validity: 'Valid for',\n      conditions: 'Terms',\n      signature: 'Signature & stamp'\n    },\n    de: {\n      quote_title: 'OFFERTE',\n      quote_number: 'Offerte Nr.',\n      date: 'Datum',\n      client: 'Kunde',\n      description: 'Beschreibung',\n      quantity: 'Menge',\n      unit_price: 'Einzelpreis',\n      total: 'Gesamt',\n      subtotal: 'Zwischensumme (exkl. MwSt.)',\n      vat: 'MwSt.',\n      total_ttc: 'Gesamtsumme (inkl. MwSt.)',\n      delivery: 'Lieferzeit',\n      validity: 'Gültigkeit',\n      conditions: 'Bedingungen',\n      signature: 'Unterschrift'\n    },\n    it: {\n      quote_title: 'PREVENTIVO',\n      quote_number: 'Preventivo N°',\n      date: 'Data',\n      client: 'Cliente',\n      description: 'Descrizione',\n      quantity: 'Qtà',\n      unit_price: 'Prezzo unit.',\n      total: 'Totale',\n      subtotal: 'Subtotale (IVA escl.)',\n      vat: 'IVA',\n      total_ttc: 'Totale (IVA incl.)',\n      delivery: 'Tempi di consegna',\n      validity: 'Validità',\n      conditions: 'Condizioni',\n      signature: 'Firma'\n    }\n  };\n  \n  const l = labels[language] || labels.fr;\n  \n  const linesHtml = quote.lines.map(line => `\n    <tr>\n      <td>${line.description}</td>\n      <td class=\"center\">${line.quantity}</td>\n      <td class=\"right\">${line.unit_price.toFixed(2)} ${quote.devise}</td>\n      <td class=\"right\"><strong>${line.total.toFixed(2)} ${quote.devise}</strong></td>\n    </tr>\n  `).join('');\n  \n  const conditionsHtml = quote.conditions.map(c => `<li>${c}</li>`).join('');\n  \n  const html = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    * { margin: 0; padding: 0; box-sizing: border-box; }\n    body { font-family: 'Helvetica', 'Arial', sans-serif; font-size: 10pt; color: #333; padding: 40px; }\n    .header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 40px; border-bottom: 3px solid #2563eb; padding-bottom: 20px; }\n    .logo { font-size: 28pt; font-weight: bold; color: #2563eb; }\n    .company-info { text-align: right; font-size: 9pt; line-height: 1.6; color: #666; }\n    .quote-title { font-size: 24pt; font-weight: bold; color: #2563eb; margin-bottom: 10px; }\n    .quote-meta { display: flex; gap: 40px; margin-bottom: 30px; font-size: 9pt; }\n    .client-box { background: #f8fafc; padding: 15px; border-left: 4px solid #2563eb; margin-bottom: 30px; }\n    .client-box h3 { color: #2563eb; margin-bottom: 10px; }\n    .project-desc { background: #fef3c7; padding: 15px; margin-bottom: 25px; border-radius: 4px; }\n    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }\n    th { background: #2563eb; color: white; padding: 12px 8px; text-align: left; font-size: 9pt; }\n    td { padding: 10px 8px; border-bottom: 1px solid #e5e7eb; }\n    tr:hover { background: #f9fafb; }\n    .center { text-align: center; }\n    .right { text-align: right; }\n    .totals { margin-left: auto; width: 300px; margin-top: 20px; }\n    .totals tr td { border: none; padding: 8px; }\n    .totals .total-row { background: #2563eb; color: white; font-size: 12pt; font-weight: bold; }\n    .conditions { margin-top: 30px; }\n    .conditions h3 { color: #2563eb; margin-bottom: 10px; }\n    .conditions ul { margin-left: 20px; line-height: 1.8; }\n    .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 8pt; color: #666; text-align: center; }\n    .signature-box { margin-top: 60px; border: 1px solid #ccc; padding: 40px 20px; text-align: center; color: #999; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <div>\n      <div class=\"logo\">LX Studio</div>\n      <div style=\"color: #666; font-size: 9pt; margin-top: 5px;\">Web • SEO • IA</div>\n    </div>\n    <div class=\"company-info\">\n      LX Studio<br>\n      contact@lxstudio.ch<br>\n      ${process.env.TEL || '+41 XX XXX XX XX'}<br>\n      ${process.env.SITE_URL || 'lxstudio.ch'}\n    </div>\n  </div>\n  \n  <div class=\"quote-title\">${l.quote_title}</div>\n  \n  <div class=\"quote-meta\">\n    <div><strong>${l.quote_number}:</strong> ${quote.quote_number}</div>\n    <div><strong>${l.date}:</strong> ${quote.date}</div>\n    <div><strong>${l.validity}:</strong> ${quote.validite}</div>\n  </div>\n  \n  <div class=\"client-box\">\n    <h3>${l.client}</h3>\n    ${quote.client.prenom} ${quote.client.nom}<br>\n    ${quote.client.entreprise ? quote.client.entreprise + '<br>' : ''}\n    ${quote.client.email}<br>\n    ${quote.client.telephone}\n  </div>\n  \n  ${quote.description_projet ? `\n  <div class=\"project-desc\">\n    <strong>Projet:</strong> ${quote.description_projet}\n  </div>\n  ` : ''}\n  \n  <table>\n    <thead>\n      <tr>\n        <th>${l.description}</th>\n        <th class=\"center\" style=\"width: 60px;\">${l.quantity}</th>\n        <th class=\"right\" style=\"width: 120px;\">${l.unit_price}</th>\n        <th class=\"right\" style=\"width: 120px;\">${l.total}</th>\n      </tr>\n    </thead>\n    <tbody>\n      ${linesHtml}\n    </tbody>\n  </table>\n  \n  <table class=\"totals\">\n    <tr>\n      <td><strong>${l.subtotal}</strong></td>\n      <td class=\"right\"><strong>${quote.subtotal_ht} ${quote.devise}</strong></td>\n    </tr>\n    <tr>\n      <td>${l.vat} (${quote.tva_rate}%)</td>\n      <td class=\"right\">${quote.tva_amount} ${quote.devise}</td>\n    </tr>\n    <tr class=\"total-row\">\n      <td>${l.total_ttc}</td>\n      <td class=\"right\">${quote.total_ttc} ${quote.devise}</td>\n    </tr>\n  </table>\n  \n  <div style=\"margin-top: 20px; background: #f0f9ff; padding: 15px; border-radius: 4px;\">\n    <strong>${l.delivery}:</strong> ${quote.delai_estime}\n  </div>\n  \n  <div class=\"conditions\">\n    <h3>${l.conditions}</h3>\n    <ul>\n      ${conditionsHtml}\n    </ul>\n  </div>\n  \n  <div class=\"signature-box\">\n    ${l.signature}\n  </div>\n  \n  <div class=\"footer\">\n    LX Studio - Agence digitale - contact@lxstudio.ch<br>\n    Document généré automatiquement le ${new Date().toLocaleString('fr-CH')}\n  </div>\n</body>\n</html>\n  `;\n  \n  items.push({\n    json: {\n      ...item.json,\n      pdf_html: html,\n      quote_filename: `Devis_LXStudio_${quote.quote_number}.pdf`\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "generate-pdf-html",
+      "name": "Generate PDF HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 220]
+    },
+    {
+      "parameters": {
+        "operation": "convert",
+        "html": "={{ $json.pdf_html }}",
+        "options": {
+          "format": "A4",
+          "marginTop": 10,
+          "marginRight": 10,
+          "marginBottom": 10,
+          "marginLeft": 10
+        }
+      },
+      "id": "html-to-pdf",
+      "name": "Convert HTML to PDF",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1,
+      "position": [2220, 220]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'contact@lxstudio.ch' }}",
+        "toEmail": "={{ $json.lead.email }}",
+        "ccEmail": "={{ $env.SALES_CC || '' }}",
+        "subject": "={{ $json.language === 'en' ? 'Your LX Studio Quotation' : $json.language === 'de' ? 'Ihre Offerte von LX Studio' : $json.language === 'it' ? 'Il vostro preventivo LX Studio' : 'Votre devis LX Studio' }}",
+        "emailType": "html",
+        "message": "={{ $json.language === 'en' ? `<p>Dear ${$json.lead.prenom},</p><p>Thank you for your interest in LX Studio.</p><p>Please find attached our detailed quotation for your project.</p><p>We remain at your disposal for any questions.</p><p><strong>Next steps:</strong></p><ul><li>Review the quotation</li><li>Book a 15-minute call to discuss: <a href=\\\"${$env.CAL_URL}\\\">Book here</a></li><li>Validate and we'll start immediately</li></ul>` : $json.language === 'de' ? `<p>Sehr geehrte(r) ${$json.lead.prenom},</p><p>Vielen Dank für Ihr Interesse an LX Studio.</p><p>Anbei finden Sie unsere detaillierte Offerte für Ihr Projekt.</p><p>Für Fragen stehen wir Ihnen gerne zur Verfügung.</p>` : $json.language === 'it' ? `<p>Gentile ${$json.lead.prenom},</p><p>Grazie per l'interesse in LX Studio.</p><p>In allegato trovate il nostro preventivo dettagliato.</p><p>Restiamo a disposizione per qualsiasi domanda.</p>` : `<p>Bonjour ${$json.lead.prenom},</p><p>Merci pour votre intérêt pour LX Studio.</p><p>Vous trouverez ci-joint notre devis détaillé pour votre projet.</p><p>Nous restons à votre disposition pour toute question.</p><p><strong>Prochaines étapes:</strong></p><ul><li>Examiner le devis</li><li>Réserver un appel de 15 minutes pour discuter: <a href=\\\"${$env.CAL_URL}\\\">Réserver ici</a></li><li>Valider et nous démarrons immédiatement</li></ul>` }}{{ '<br><br>—<br><strong>Tanguy</strong>, LX Studio<br>Sites web • SEO • Agents IA<br>📧 contact@lxstudio.ch | 🌐 ' + ($env.SITE_URL || 'lxstudio.ch') + '<br>📞 ' + ($env.TEL || '') }}",
+        "attachments": "={{ $json.quote_filename }}",
+        "options": {}
+      },
+      "id": "send-quote-email",
+      "name": "Send Quote Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2440, 220],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_ACCOUNT}}",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"thread_key\": \"{{ $json.thread_key }}\",\n  \"status\": \"quoted\",\n  \"quote_number\": \"{{ $json.quote.quote_number }}\",\n  \"quote_amount\": {{ $json.quote.total_ttc }},\n  \"quote_sent_at\": \"{{ $now.toISO() }}\",\n  \"updated_at\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "update-lead-quoted",
+      "name": "Update Lead Status (Quoted)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2660, 220],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{SUPABASE_CRED}}",
+          "name": "Supabase Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'contact@lxstudio.ch' }}",
+        "toEmail": "={{ $json.lead.email || $json.original_from }}",
+        "subject": "={{ $json.language === 'en' ? 'Additional information needed' : $json.language === 'de' ? 'Zusätzliche Informationen benötigt' : $json.language === 'it' ? 'Informazioni aggiuntive necessarie' : 'Quelques précisions pour votre devis' }}",
+        "emailType": "html",
+        "message": "={{ $json.language === 'en' ? `<p>Dear ${$json.lead.prenom || 'customer'},</p><p>Thank you for your request!</p><p>To prepare an accurate quotation, we need a few more details:</p><ul>${($json.questions || []).map(q => '<li>' + q + '</li>').join('')}</ul><p>Simply reply to this email with your answers.</p>` : $json.language === 'de' ? `<p>Sehr geehrte(r) ${$json.lead.prenom || 'Kunde'},</p><p>Danke für Ihre Anfrage!</p><p>Um ein genaues Angebot zu erstellen, benötigen wir noch einige Details:</p><ul>${($json.questions || []).map(q => '<li>' + q + '</li>').join('')}</ul><p>Antworten Sie einfach auf diese E-Mail.</p>` : $json.language === 'it' ? `<p>Gentile ${$json.lead.prenom || 'cliente'},</p><p>Grazie per la richiesta!</p><p>Per preparare un preventivo accurato, necessitiamo di qualche dettaglio:</p><ul>${($json.questions || []).map(q => '<li>' + q + '</li>').join('')}</ul><p>Risponda semplicemente a questa email.</p>` : `<p>Bonjour ${$json.lead.prenom || ''},</p><p>Merci pour votre demande !</p><p>Pour vous préparer un devis précis, j'ai besoin de quelques précisions:</p><ul>${($json.questions || []).map(q => '<li>' + q + '</li>').join('')}</ul><p>Répondez simplement à cet email avec vos réponses.</p>` }}{{ '<br><br>—<br><strong>Tanguy</strong>, LX Studio<br>Sites web • SEO • Agents IA<br>📧 contact@lxstudio.ch | 🌐 ' + ($env.SITE_URL || 'lxstudio.ch') + '<br>📞 ' + ($env.TEL || '') }}",
+        "options": {}
+      },
+      "id": "send-clarification-email",
+      "name": "Send Clarification Questions",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1780, 380],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_ACCOUNT}}",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"thread_key\": \"{{ $json.thread_key }}\",\n  \"status\": \"waiting_user\",\n  \"questions_sent\": {{ JSON.stringify($json.questions) }},\n  \"questions_sent_at\": \"{{ $now.toISO() }}\",\n  \"updated_at\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "update-lead-waiting",
+      "name": "Update Lead Status (Waiting)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 380],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{SUPABASE_CRED}}",
+          "name": "Supabase Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'contact@lxstudio.ch' }}",
+        "toEmail": "={{ $json.lead.email || $json.original_from }}",
+        "subject": "={{ $json.language === 'en' ? 'LX Studio Support' : $json.language === 'de' ? 'LX Studio Support' : $json.language === 'it' ? 'Supporto LX Studio' : 'Support LX Studio' }}",
+        "emailType": "html",
+        "message": "={{ $json.reply_draft }}",
+        "options": {}
+      },
+      "id": "send-support-email",
+      "name": "Send Support Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1560, 420],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_ACCOUNT}}",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'contact@lxstudio.ch' }}",
+        "toEmail": "={{ $json.lead.email || $json.original_from }}",
+        "subject": "={{ $json.language === 'en' ? 'Re: Your message' : 'Re: Votre message' }}",
+        "emailType": "html",
+        "message": "={{ $json.reply_draft }}",
+        "options": {}
+      },
+      "id": "send-other-email",
+      "name": "Send Other Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1560, 540],
+      "credentials": {
+        "smtp": {
+          "id": "{{SMTP_ACCOUNT}}",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"thread_key\": \"{{ $json.thread_key }}\",\n  \"status\": \"closed\",\n  \"updated_at\": \"{{ $now.toISO() }}\"\n}",
+        "options": {}
+      },
+      "id": "update-lead-closed",
+      "name": "Update Lead Status (Closed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{SUPABASE_CRED}}",
+          "name": "Supabase Auth"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "IMAP Email Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email Data": {
+      "main": [
+        [
+          {
+            "node": "Anthropic Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Parse Anthropic Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Anthropic Response": {
+      "main": [
+        [
+          {
+            "node": "Upsert Lead to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Lead to DB": {
+      "main": [
+        [
+          {
+            "node": "Switch by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Intent": {
+      "main": [
+        [
+          {
+            "node": "Send Info Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can Quote Now?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Support Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Other Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Info Email": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Status (Closed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Quote Now?": {
+      "main": [
+        [
+          {
+            "node": "Calculate Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Clarification Questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Quote": {
+      "main": [
+        [
+          {
+            "node": "Generate PDF HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PDF HTML": {
+      "main": [
+        [
+          {
+            "node": "Convert HTML to PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert HTML to PDF": {
+      "main": [
+        [
+          {
+            "node": "Send Quote Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Quote Email": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Status (Quoted)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Clarification Questions": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Status (Waiting)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "id": "email-agent-intelligent",
+  "meta": {
+    "instanceId": "lxstudio-n8n"
+  },
+  "tags": []
+}
