@@ -1,0 +1,311 @@
+<!--
+  EMAIL TEMPLATES LX STUDIO
+  Templates HTML pour les réponses automatiques de l'agent email intelligent
+-->
+
+<!-- ========================================
+     TEMPLATE 1: EMAIL INFO
+     Utilisé pour les demandes d'informations générales
+     ======================================== -->
+
+<div class="template-info">
+  <p>Bonjour,</p>
+
+  <p>Merci pour votre intérêt pour LX Studio !</p>
+
+  <h3 style="color: #2563eb; margin-top: 20px;">Nos services</h3>
+
+  <ul style="line-height: 1.8;">
+    <li><strong>Sites web vitrines</strong> : À partir de 2'500 CHF (design sur mesure, responsive, CMS)</li>
+    <li><strong>E-commerce</strong> : À partir de 5'000 CHF (boutique en ligne complète)</li>
+    <li><strong>SEO & Référencement</strong> : À partir de 800 CHF (audit + optimisation)</li>
+    <li><strong>Agents IA & Automatisations</strong> : À partir de 1'500 CHF (workflows n8n, chatbots)</li>
+  </ul>
+
+  <h3 style="color: #2563eb; margin-top: 20px;">Notre méthode</h3>
+
+  <ol style="line-height: 1.8;">
+    <li>Appel découverte (15 min gratuit)</li>
+    <li>Devis détaillé sous 48h</li>
+    <li>Acompte 30% - Démarrage immédiat</li>
+    <li>Livraison + formation</li>
+    <li>Support 3 mois inclus</li>
+  </ol>
+
+  <p style="margin-top: 20px;">
+    <strong>Prochaine étape :</strong><br>
+    Répondez à cet email avec les détails de votre projet, ou appelez-nous directement au
+    <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </p>
+
+  <p>À très bientôt !</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Sites web • SEO • Agents IA<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     TEMPLATE 2: EMAIL CLARIFICATION (Devis incomplet)
+     Utilisé quand l'agent a besoin de plus d'informations
+     ======================================== -->
+
+<div class="template-clarification">
+  <p>Bonjour <strong>{{ prenom }}</strong>,</p>
+
+  <p>Merci pour votre demande de devis !</p>
+
+  <p>Pour vous préparer une offre précise et adaptée, j'ai besoin de quelques précisions :</p>
+
+  <ul style="background: #f0f9ff; padding: 20px; border-left: 4px solid #2563eb; margin: 20px 0; line-height: 2;">
+    <!-- Questions dynamiques générées par Claude -->
+    <li><strong>Question 1</strong> : Quel est votre budget approximatif pour ce projet ?</li>
+    <li><strong>Question 2</strong> : Quel est le délai souhaité pour la livraison ?</li>
+    <li><strong>Question 3</strong> : Avez-vous des fonctionnalités spécifiques en tête ?</li>
+    <li><strong>Question 4</strong> : Avez-vous déjà un nom de domaine ?</li>
+  </ul>
+
+  <p>
+    <strong>Répondez simplement à cet email</strong> avec vos réponses, et je vous enverrai un devis détaillé
+    sous 24h.
+  </p>
+
+  <p style="background: #fef3c7; padding: 15px; border-radius: 4px; margin-top: 20px;">
+    💡 <strong>Conseil</strong> : Plus vos réponses seront détaillées, plus le devis sera précis et adapté
+    à vos besoins !
+  </p>
+
+  <p>À très vite,</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Sites web • SEO • Agents IA<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     TEMPLATE 3: EMAIL DEVIS (avec PDF)
+     Utilisé quand le devis PDF est envoyé en pièce jointe
+     ======================================== -->
+
+<div class="template-quote">
+  <p>Bonjour <strong>{{ prenom }}</strong>,</p>
+
+  <p>Merci pour votre intérêt pour LX Studio.</p>
+
+  <p>
+    Suite à votre demande, vous trouverez <strong>ci-joint notre devis détaillé</strong>
+    pour votre projet <em>"{{ description_courte }}"</em>.
+  </p>
+
+  <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 25px 0;">
+    <h3 style="color: #2563eb; margin-top: 0;">📋 Résumé du devis</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 8px 0;"><strong>Devis N° :</strong></td>
+        <td style="text-align: right;">{{ quote_number }}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0;"><strong>Montant TTC :</strong></td>
+        <td style="text-align: right; font-size: 18pt; color: #2563eb;"><strong>{{ total_ttc }} CHF</strong></td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0;"><strong>Délai estimé :</strong></td>
+        <td style="text-align: right;">{{ delai_estime }}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0;"><strong>Validité :</strong></td>
+        <td style="text-align: right;">30 jours</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3 style="color: #2563eb;">🚀 Prochaines étapes</h3>
+
+  <ol style="line-height: 2;">
+    <li><strong>Examinez le devis</strong> en pièce jointe (PDF)</li>
+    <li><strong>Des questions ?</strong> Répondez à cet email ou appelez-nous au
+        <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+    </li>
+    <li><strong>Vous validez ?</strong> Répondez "OK pour démarrer" et nous lançons le projet immédiatement</li>
+  </ol>
+
+  <div style="background: #dcfce7; padding: 15px; border-left: 4px solid #22c55e; margin: 25px 0;">
+    <strong>✅ Ce qui est inclus :</strong>
+    <ul style="margin-top: 10px; line-height: 1.8;">
+      <li>Conception sur mesure selon votre charte</li>
+      <li>Développement responsive (mobile, tablette, desktop)</li>
+      <li>Formation à l'utilisation</li>
+      <li>Support 3 mois après livraison</li>
+      <li>Hébergement premium inclus (1 an)</li>
+    </ul>
+  </div>
+
+  <p>Nous restons à votre entière disposition pour tout complément d'information.</p>
+
+  <p>Au plaisir de collaborer avec vous !</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Sites web • SEO • Agents IA<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     TEMPLATE 4: EMAIL SUPPORT
+     Utilisé pour les demandes de support technique
+     ======================================== -->
+
+<div class="template-support">
+  <p>Bonjour <strong>{{ prenom }}</strong>,</p>
+
+  <p>Merci pour votre message.</p>
+
+  <p>
+    Nous avons bien reçu votre demande de support concernant :
+    <strong>"{{ probleme_court }}"</strong>
+  </p>
+
+  <div style="background: #fef3c7; padding: 20px; border-left: 4px solid #f59e0b; margin: 20px 0;">
+    <strong>⚡ Action immédiate :</strong>
+    <ul style="margin-top: 10px; line-height: 1.8;">
+      <li>Votre demande a été transmise à notre équipe technique</li>
+      <li>Vous recevrez une réponse sous <strong>4 heures ouvrées</strong></li>
+      <li>Numéro de ticket : <strong>{{ ticket_number }}</strong></li>
+    </ul>
+  </div>
+
+  <p>
+    <strong>Besoin urgent ?</strong><br>
+    Appelez-nous directement au <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+    (lun-ven 9h-18h)
+  </p>
+
+  <p>Nous mettons tout en œuvre pour résoudre votre problème rapidement.</p>
+
+  <p>Cordialement,</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Sites web • SEO • Agents IA<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     TEMPLATE 5: EMAIL AUTRE (spam/hors sujet)
+     Utilisé pour les emails non pertinents
+     ======================================== -->
+
+<div class="template-other">
+  <p>Bonjour,</p>
+
+  <p>Merci pour votre message.</p>
+
+  <p>
+    Nous avons bien reçu votre email, mais celui-ci ne semble pas concerner nos services
+    (création de sites web, SEO, agents IA).
+  </p>
+
+  <p>
+    Si votre demande concerne effectivement nos prestations, n'hésitez pas à nous recontacter
+    en précisant votre besoin.
+  </p>
+
+  <p>Cordialement,</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Sites web • SEO • Agents IA<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     TEMPLATE 6: EMAIL MULTILINGUE - ENGLISH
+     ======================================== -->
+
+<div class="template-english">
+  <p>Hello <strong>{{ first_name }}</strong>,</p>
+
+  <p>Thank you for your interest in LX Studio!</p>
+
+  <p>
+    We have received your request for a quotation regarding your project
+    <em>"{{ project_description }}"</em>.
+  </p>
+
+  <h3 style="color: #2563eb; margin-top: 20px;">Our Services</h3>
+
+  <ul style="line-height: 1.8;">
+    <li><strong>Website Design</strong>: From CHF 2'500 (custom design, responsive, CMS)</li>
+    <li><strong>E-commerce</strong>: From CHF 5'000 (complete online shop)</li>
+    <li><strong>SEO</strong>: From CHF 800 (audit + optimization)</li>
+    <li><strong>AI Agents & Automation</strong>: From CHF 1'500 (workflows, chatbots)</li>
+  </ul>
+
+  <p style="margin-top: 20px;">
+    <strong>Next steps:</strong><br>
+    Reply to this email with your project details, or call us at
+    <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </p>
+
+  <p>Looking forward to working with you!</p>
+
+  <br>
+  <div style="border-top: 2px solid #2563eb; padding-top: 15px; margin-top: 20px;">
+    <strong>Tanguy</strong>, LX Studio<br>
+    Web Design • SEO • AI Agents<br>
+    📧 <a href="mailto:contact@lxstudio.ch" style="color: #2563eb;">contact@lxstudio.ch</a> |
+    🌐 <a href="https://lxstudio.ch" style="color: #2563eb;">lxstudio.ch</a><br>
+    📞 <a href="tel:+41787038800" style="color: #2563eb;">+41 78 703 88 00</a>
+  </div>
+</div>
+
+
+<!-- ========================================
+     NOTES D'UTILISATION
+
+     Variables disponibles (à remplacer dans n8n):
+     - {{ prenom }} / {{ first_name }}
+     - {{ nom }} / {{ last_name }}
+     - {{ entreprise }} / {{ company }}
+     - {{ description_projet }} / {{ project_description }}
+     - {{ quote_number }}
+     - {{ total_ttc }}
+     - {{ delai_estime }}
+     - {{ questions }} (array)
+     - {{ language }} (fr/en/de/it)
+
+     CSS inline utilisé pour compatibilité email
+     Couleurs LX Studio:
+     - Bleu principal: #2563eb
+     - Vert: #22c55e
+     - Orange: #f59e0b
+     - Gris: #666
+
+     ======================================== -->
