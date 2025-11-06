@@ -1,0 +1,342 @@
+{
+  "name": "WF-02 Contact & Audit Express",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "contact-start",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Contact Start",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "contact-start"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Idempotency check\nconst crypto = require('crypto');\nconst data = $input.item.json;\nconst key = crypto.createHash('md5').update(`contact-${data.company_id}-${data.contact_email}`).digest('hex');\n\nreturn [{\n  json: {\n    workflow: 'wf-02-contact',\n    idempotency_key: key,\n    originalData: data\n  }\n}];"
+      },
+      "id": "check-idempotency",
+      "name": "00 Check Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-idempotency-check",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: $json.workflow, idempotency_key: $json.idempotency_key }) }}",
+        "options": {}
+      },
+      "id": "call-idempotency",
+      "name": "Call Idempotency Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isDuplicate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "if-duplicate",
+      "name": "If Duplicate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ message: 'Already processed', isDuplicate: true }) }}"
+      },
+      "id": "respond-duplicate",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "company_id",
+              "value": "={{ $('00 Check Idempotency').item.json.originalData.company_id }}",
+              "type": "string"
+            },
+            {
+              "name": "contact_email",
+              "value": "={{ $('00 Check Idempotency').item.json.originalData.contact_email }}",
+              "type": "string"
+            },
+            {
+              "name": "company_name",
+              "value": "={{ $('00 Check Idempotency').item.json.originalData.company_name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-data",
+      "name": "01 Set Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.ANTHROPIC_MODEL }}\",\n  \"max_tokens\": 1024,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Tu es un expert en automatisation pour LX Studio (Suisse). Génère un email personnalisé de prospection pour {{ $json.company_name }}.\\n\\nObjectif : Proposer un audit gratuit d'automatisation.\\n\\nInclure :\\n- Accroche personnalisée\\n- Bénéfices (gain de temps, réduction d'erreurs)\\n- Lien Typeform audit : {{ $env.BASE_DOMAIN }}/typeform/{{ $env.TYPEFORM_AUDIT_ID }}\\n- Ton professionnel mais chaleureux\\n\\nFormat : Sujet + Corps (max 150 mots)\"\n  }]\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "ai-generate-email",
+      "name": "02 AI Generate Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract subject and body from AI response\nconst aiResponse = $input.item.json.content[0].text;\n\n// Simple parsing (AI should return \"Sujet: ...\\n\\nCorps: ...\")\nconst subjectMatch = aiResponse.match(/Sujet:\\s*(.+?)\\n/i);\nconst bodyMatch = aiResponse.match(/Corps:\\s*([\\s\\S]+)/i);\n\nconst subject = subjectMatch ? subjectMatch[1].trim() : 'Audit gratuit d\\'automatisation pour votre entreprise';\nconst body = bodyMatch ? bodyMatch[1].trim() : aiResponse;\n\nreturn [{\n  json: {\n    to: $('01 Set Data').item.json.contact_email,\n    subject: subject,\n    body: body,\n    company_id: $('01 Set Data').item.json.company_id\n  }\n}];"
+      },
+      "id": "parse-email",
+      "name": "03 Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.FROM_EMAIL }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "04 Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1780, 500],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "Gmail SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "days"
+      },
+      "id": "wait-3-days",
+      "name": "05 Wait 3 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [2000, 500]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/audits?company_id=eq.{{ $('01 Set Data').item.json.company_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-audit-response",
+      "name": "06 Check Audit Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "if-no-response",
+      "name": "If No Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2440, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare voice call (VAPI or Twilio)\n// For now, just log that a call should be made\nreturn [{\n  json: {\n    workflow: 'wf-02-contact',\n    run_id: $execution.id,\n    step: '07 Voice Follow-up',\n    level: 'info',\n    message: `No response from ${$('01 Set Data').item.json.company_name}, voice follow-up recommended`,\n    payload: {\n      company_id: $('01 Set Data').item.json.company_id,\n      contact_email: $('01 Set Data').item.json.contact_email,\n      action: 'voice_call_needed'\n    }\n  }\n}];"
+      },
+      "id": "voice-followup",
+      "name": "07 Voice Follow-up",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "log-voice",
+      "name": "Log Voice Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/companies?id=eq.{{ $('01 Set Data').item.json.company_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'qualified' }) }}",
+        "options": {}
+      },
+      "id": "update-status",
+      "name": "08 Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Contact campaign executed' }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2880, 600]
+    }
+  ],
+  "connections": {
+    "Webhook Contact Start": {
+      "main": [[{"node": "00 Check Idempotency", "type": "main", "index": 0}]]
+    },
+    "00 Check Idempotency": {
+      "main": [[{"node": "Call Idempotency Check", "type": "main", "index": 0}]]
+    },
+    "Call Idempotency Check": {
+      "main": [[{"node": "If Duplicate", "type": "main", "index": 0}]]
+    },
+    "If Duplicate": {
+      "main": [
+        [{"node": "Respond Duplicate", "type": "main", "index": 0}],
+        [{"node": "01 Set Data", "type": "main", "index": 0}]
+      ]
+    },
+    "01 Set Data": {
+      "main": [[{"node": "02 AI Generate Email", "type": "main", "index": 0}]]
+    },
+    "02 AI Generate Email": {
+      "main": [[{"node": "03 Parse AI Response", "type": "main", "index": 0}]]
+    },
+    "03 Parse AI Response": {
+      "main": [[{"node": "04 Send Email", "type": "main", "index": 0}]]
+    },
+    "04 Send Email": {
+      "main": [[{"node": "05 Wait 3 Days", "type": "main", "index": 0}]]
+    },
+    "05 Wait 3 Days": {
+      "main": [[{"node": "06 Check Audit Response", "type": "main", "index": 0}]]
+    },
+    "06 Check Audit Response": {
+      "main": [[{"node": "If No Response", "type": "main", "index": 0}]]
+    },
+    "If No Response": {
+      "main": [
+        [{"node": "07 Voice Follow-up", "type": "main", "index": 0}],
+        [{"node": "08 Update Status", "type": "main", "index": 0}]
+      ]
+    },
+    "07 Voice Follow-up": {
+      "main": [[{"node": "Log Voice Call", "type": "main", "index": 0}]]
+    },
+    "08 Update Status": {
+      "main": [[{"node": "Respond Success", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

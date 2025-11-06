@@ -1,0 +1,132 @@
+{
+  "name": "WF-06 Paiements & Contrat",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "proposal-accepted",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-proposal-accepted",
+      "name": "Webhook Proposal Accepted",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "proposal-accepted"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst totalCost = data.total_cost_chf;\nconst depositPercent = parseFloat($env.DEPOSIT_PERCENT) || 30;\nconst depositAmount = Math.round(totalCost * depositPercent / 100);\nconst balanceAmount = Math.round(totalCost - depositAmount);\n\nreturn {\n  json: {\n    company_id: data.company_id,\n    proposal_id: data.proposal_id,\n    estimate_id: data.estimate_id,\n    total_cost: totalCost,\n    deposit_amount: depositAmount,\n    balance_amount: balanceAmount\n  }\n};"
+      },
+      "id": "calculate-payments",
+      "name": "01 Calculate Payments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.stripe.com/v1/payment_links",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{ $env.STRIPE_SECRET_KEY }}"},
+            {"name": "Content-Type", "value": "application/x-www-form-urlencoded"}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {"name": "line_items[0][price_data][currency]", "value": "chf"},
+            {"name": "line_items[0][price_data][product_data][name]", "value": "Acompte 30% - Automatisation LX Studio"},
+            {"name": "line_items[0][price_data][unit_amount]", "value": "={{ Math.round($json.deposit_amount * 100) }}"},
+            {"name": "line_items[0][quantity]", "value": "1"},
+            {"name": "metadata[company_id]", "value": "={{ $json.company_id }}"},
+            {"name": "metadata[payment_type]", "value": "deposit"}
+          ]
+        },
+        "options": {"timeout": 15000}
+      },
+      "id": "create-deposit-link",
+      "name": "02 Create Deposit Link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/payments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $('01 Calculate Payments').item.json.company_id }}\",\n  \"proposal_id\": \"{{ $('01 Calculate Payments').item.json.proposal_id }}\",\n  \"amount_chf\": {{ $('01 Calculate Payments').item.json.deposit_amount }},\n  \"payment_type\": \"deposit\",\n  \"status\": \"pending\",\n  \"stripe_checkout_session_id\": \"{{ $json.id }}\"\n}",
+        "options": {}
+      },
+      "id": "insert-payment-deposit",
+      "name": "03 Insert Payment Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/companies?id=eq.{{ $('01 Calculate Payments').item.json.company_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"status\": \"won\" }",
+        "options": {}
+      },
+      "id": "update-company-status",
+      "name": "04 Update Company Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, deposit_link: $('02 Create Deposit Link').item.json.url, deposit_amount: $('01 Calculate Payments').item.json.deposit_amount }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Proposal Accepted": {"main": [[{"node": "01 Calculate Payments", "type": "main", "index": 0}]]},
+    "01 Calculate Payments": {"main": [[{"node": "02 Create Deposit Link", "type": "main", "index": 0}]]},
+    "02 Create Deposit Link": {"main": [[{"node": "03 Insert Payment Record", "type": "main", "index": 0}]]},
+    "03 Insert Payment Record": {"main": [[{"node": "04 Update Company Status", "type": "main", "index": 0}]]},
+    "04 Update Company Status": {"main": [[{"node": "Respond Success", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,247 @@
+{
+  "name": "WF-03 Audit Structuration",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "typeform-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-typeform",
+      "name": "Webhook Typeform",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "typeform-audit"
+    },
+    {
+      "parameters": {
+        "path": "voice-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-voice",
+      "name": "Webhook Voice",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 500],
+      "webhookId": "voice-audit"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map Typeform responses to common JSON\nconst answers = $input.item.json.form_response?.answers || [];\n\nfunction getAnswer(ref, defaultValue = null) {\n  const answer = answers.find(a => a.field.ref === ref);\n  if (!answer) return defaultValue;\n  if (answer.type === 'text') return answer.text;\n  if (answer.type === 'email') return answer.email;\n  if (answer.type === 'url') return answer.url;\n  if (answer.type === 'phone_number') return answer.phone_number;\n  if (answer.type === 'number') return answer.number;\n  if (answer.type === 'boolean') return answer.boolean;\n  if (answer.type === 'choice') return answer.choice.label;\n  if (answer.type === 'choices') return answer.choices.labels;\n  return defaultValue;\n}\n\nconst normalized = {\n  source: 'typeform',\n  form_id: $input.item.json.form_response.form_id,\n  submitted_at: $input.item.json.form_response.submitted_at,\n  company: {\n    name: getAnswer('company_name'),\n    website: getAnswer('website'),\n    industry: getAnswer('industry'),\n    size_employees: getAnswer('size')\n  },\n  contact: {\n    email: getAnswer('email'),\n    phone: getAnswer('phone')\n  },\n  audit: {\n    pain_points: [getAnswer('challenge')],\n    manual_tasks: getAnswer('manual_processes', []),\n    manual_hours_per_week: getAnswer('hours_manual', 0),\n    structured_data: {\n      current_tools: getAnswer('current_tools', false),\n      budget_range: getAnswer('budget'),\n      primary_goal: getAnswer('goal'),\n      desired_timeline: getAnswer('timeline'),\n      additional_notes: getAnswer('comments')\n    }\n  },\n  raw_responses: $input.item.json.form_response\n};\n\nreturn { json: normalized };"
+      },
+      "id": "map-typeform",
+      "name": "01 Map Typeform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Map Voice transcript to common JSON\nconst voice = $input.item.json;\n\nconst normalized = {\n  source: 'voice',\n  call_id: voice.call_id,\n  submitted_at: voice.timestamp || new Date().toISOString(),\n  company: {\n    name: voice.company_name,\n    website: null,\n    industry: null,\n    size_employees: null\n  },\n  contact: {\n    email: null,\n    phone: voice.contact_phone\n  },\n  audit: {\n    pain_points: [],\n    manual_tasks: [],\n    manual_hours_per_week: 0,\n    structured_data: {\n      transcript: voice.transcript,\n      duration_seconds: voice.duration_seconds\n    }\n  },\n  raw_responses: voice\n};\n\nreturn { json: normalized };"
+      },
+      "id": "map-voice",
+      "name": "01 Map Voice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {},
+      "id": "merge-sources",
+      "name": "02 Merge Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.ANTHROPIC_MODEL }}\",\n  \"max_tokens\": 2048,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Tu es un expert en analyse de processus pour LX Studio.\\n\\nDonnées brutes :\\n{{ JSON.stringify($json, null, 2) }}\\n\\nGénère un AUDIT structuré au format JSON avec :\\n{\\n  \\\"summary\\\": \\\"Résumé en 2-3 phrases\\\",\\n  \\\"pain_points\\\": [\\\"Point 1\\\", \\\"Point 2\\\"],\\n  \\\"opportunities\\\": [\\\"Opportunité 1\\\", \\\"Opportunité 2\\\"],\\n  \\\"manual_tasks_count\\\": 5,\\n  \\\"manual_hours_per_week\\\": 15\\n}\\n\\nRéponds UNIQUEMENT avec le JSON, sans commentaire.\"\n  }]\n}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "maxRetries": 2
+          }
+        }
+      },
+      "id": "ai-parse-audit",
+      "name": "03 AI Parse Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract JSON from AI response\nconst aiText = $input.item.json.content[0].text;\nconst jsonMatch = aiText.match(/\\{[\\s\\S]*\\}/);\nconst structured = jsonMatch ? JSON.parse(jsonMatch[0]) : {};\n\nconst auditData = {\n  source: $('02 Merge Sources').item.json.source,\n  company_name: $('02 Merge Sources').item.json.company.name,\n  contact_email: $('02 Merge Sources').item.json.contact.email,\n  structured_audit: structured,\n  raw_responses: $('02 Merge Sources').item.json.raw_responses\n};\n\nreturn { json: auditData };"
+      },
+      "id": "extract-json",
+      "name": "04 Extract JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/companies?name=eq.{{ encodeURIComponent($json.company_name) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-company",
+      "name": "05 Get Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/audits",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json[0]?.id }}\",\n  \"source\": \"{{ $('04 Extract JSON').item.json.source }}\",\n  \"raw_responses\": {{ JSON.stringify($('04 Extract JSON').item.json.raw_responses) }},\n  \"structured_data\": {{ JSON.stringify($('04 Extract JSON').item.json.structured_audit) }},\n  \"summary\": \"{{ $('04 Extract JSON').item.json.structured_audit.summary }}\",\n  \"pain_points\": {{ JSON.stringify($('04 Extract JSON').item.json.structured_audit.pain_points) }},\n  \"opportunities\": {{ JSON.stringify($('04 Extract JSON').item.json.structured_audit.opportunities) }},\n  \"manual_tasks_count\": {{ $('04 Extract JSON').item.json.structured_audit.manual_tasks_count }},\n  \"manual_hours_per_week\": {{ $('04 Extract JSON').item.json.structured_audit.manual_hours_per_week }}\n}",
+        "options": {}
+      },
+      "id": "insert-audit",
+      "name": "06 Insert Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log completion\nreturn [{\n  json: {\n    workflow: 'wf-03-audit',\n    run_id: $execution.id,\n    level: 'info',\n    message: `Audit created for ${$('04 Extract JSON').item.json.company_name}`,\n    payload: {\n      audit_id: $input.item.json.id,\n      company_id: $input.item.json.company_id\n    }\n  }\n}];"
+      },
+      "id": "log-success",
+      "name": "07 Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-log",
+      "name": "Call Log Utils",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, audit_id: $('06 Insert Audit').item.json.id }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Typeform": {
+      "main": [[{"node": "01 Map Typeform", "type": "main", "index": 0}]]
+    },
+    "Webhook Voice": {
+      "main": [[{"node": "01 Map Voice", "type": "main", "index": 0}]]
+    },
+    "01 Map Typeform": {
+      "main": [[{"node": "02 Merge Sources", "type": "main", "index": 0}]]
+    },
+    "01 Map Voice": {
+      "main": [[{"node": "02 Merge Sources", "type": "main", "index": 1}]]
+    },
+    "02 Merge Sources": {
+      "main": [[{"node": "03 AI Parse Audit", "type": "main", "index": 0}]]
+    },
+    "03 AI Parse Audit": {
+      "main": [[{"node": "04 Extract JSON", "type": "main", "index": 0}]]
+    },
+    "04 Extract JSON": {
+      "main": [[{"node": "05 Get Company", "type": "main", "index": 0}]]
+    },
+    "05 Get Company": {
+      "main": [[{"node": "06 Insert Audit", "type": "main", "index": 0}]]
+    },
+    "06 Insert Audit": {
+      "main": [[{"node": "07 Log Success", "type": "main", "index": 0}]]
+    },
+    "07 Log Success": {
+      "main": [[{"node": "Call Log Utils", "type": "main", "index": 0}]]
+    },
+    "Call Log Utils": {
+      "main": [[{"node": "Respond Success", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,105 @@
+{
+  "name": "WF-09 Recette Go-Live Formation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "ready-for-uat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-ready-uat",
+      "name": "Webhook Ready for UAT",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "ready-for-uat"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects?id=eq.{{ $json.project_id }}&select=*,company_id(name,contacts(email))",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-project",
+      "name": "01 Get Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects?id=eq.{{ $json[0].id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"uat\",\n  \"uat_started_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "update-status-uat",
+      "name": "02 Update Status to UAT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.FROM_EMAIL }}",
+        "toEmail": "={{ $('01 Get Project').item.json[0].company_id.contacts[0].email }}",
+        "subject": "🎯 Votre projet est prêt pour les tests !",
+        "emailType": "html",
+        "message": "=<h2>Bonne nouvelle ! 🎉</h2>\n<p>Votre projet d'automatisation est prêt pour la phase de recette (UAT).</p>\n<h3>Prochaines étapes :</h3>\n<ol>\n  <li>Accéder à votre espace Notion pour tester les workflows</li>\n  <li>Remplir la checklist de tests : <a href=\"https://form.typeform.com/to/{{ $env.TYPEFORM_UAT_ID }}?project_id={{ $('01 Get Project').item.json[0].id }}\">Accéder à la checklist</a></li>\n  <li>Remonter les anomalies éventuelles</li>\n</ol>\n<p>Nous restons à votre disposition pour tout accompagnement.</p>\n<p>L'équipe LX Studio</p>",
+        "options": {}
+      },
+      "id": "send-uat-email",
+      "name": "03 Send UAT Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 400],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "Gmail SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, status: 'uat', project_id: $('01 Get Project').item.json[0].id }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Ready for UAT": {"main": [[{"node": "01 Get Project", "type": "main", "index": 0}]]},
+    "01 Get Project": {"main": [[{"node": "02 Update Status to UAT", "type": "main", "index": 0}]]},
+    "02 Update Status to UAT": {"main": [[{"node": "03 Send UAT Email", "type": "main", "index": 0}]]},
+    "03 Send UAT Email": {"main": [[{"node": "Respond Success", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

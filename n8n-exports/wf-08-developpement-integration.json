@@ -1,0 +1,156 @@
+{
+  "name": "WF-08 Développement & Intégration",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "onboarding-completed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-onboarding",
+      "name": "Webhook Onboarding Completed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "onboarding-completed"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract company_id from hidden fields or query param\nconst hidden = $input.item.json.form_response?.hidden || {};\nconst companyId = hidden.company_id || $input.item.json.company_id;\n\nif (!companyId) {\n  throw new Error('company_id not found in webhook payload');\n}\n\nreturn { json: { company_id: companyId } };"
+      },
+      "id": "extract-company",
+      "name": "01 Extract Company ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects?company_id=eq.{{ $json.company_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-project",
+      "name": "02 Get Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects?id=eq.{{ $json[0].id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"dev\",\n  \"dev_started_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "update-project-status",
+      "name": "03 Update Project Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create development milestones\nconst projectId = $('02 Get Project').item.json[0].id;\n\nconst now = new Date();\nconst milestones = [\n  { name: 'Kick-off & Planning', due_days: 7 },\n  { name: 'Développement Phase 1', due_days: 21 },\n  { name: 'Développement Phase 2', due_days: 42 },\n  { name: 'Tests & UAT', due_days: 56 },\n  { name: 'Go-Live', due_days: 70 }\n];\n\nreturn milestones.map(m => {\n  const dueDate = new Date(now);\n  dueDate.setDate(dueDate.getDate() + m.due_days);\n  return {\n    json: {\n      project_id: projectId,\n      name: m.name,\n      description: `Jalon automatique créé par n8n`,\n      due_date: dueDate.toISOString(),\n      status: 'pending'\n    }\n  };\n});"
+      },
+      "id": "create-milestones",
+      "name": "04 Create Milestones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/project_milestones",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-milestones",
+      "name": "05 Insert Milestones",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log dev start\nreturn [{\n  json: {\n    workflow: 'wf-08-dev',\n    run_id: $execution.id,\n    level: 'info',\n    message: `Development started for project ${$('02 Get Project').item.json[0].id}`,\n    payload: {\n      project_id: $('02 Get Project').item.json[0].id,\n      company_id: $('01 Extract Company ID').item.json.company_id,\n      milestones_created: $input.all().length\n    }\n  }\n}];"
+      },
+      "id": "log-dev-start",
+      "name": "06 Log Dev Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-log",
+      "name": "Call Log Utils",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, project_id: $('02 Get Project').item.json[0].id, status: 'dev' }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Onboarding Completed": {"main": [[{"node": "01 Extract Company ID", "type": "main", "index": 0}]]},
+    "01 Extract Company ID": {"main": [[{"node": "02 Get Project", "type": "main", "index": 0}]]},
+    "02 Get Project": {"main": [[{"node": "03 Update Project Status", "type": "main", "index": 0}]]},
+    "03 Update Project Status": {"main": [[{"node": "04 Create Milestones", "type": "main", "index": 0}]]},
+    "04 Create Milestones": {"main": [[{"node": "05 Insert Milestones", "type": "main", "index": 0}]]},
+    "05 Insert Milestones": {"main": [[{"node": "06 Log Dev Start", "type": "main", "index": 0}]]},
+    "06 Log Dev Start": {"main": [[{"node": "Call Log Utils", "type": "main", "index": 0}]]},
+    "Call Log Utils": {"main": [[{"node": "Respond Success", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

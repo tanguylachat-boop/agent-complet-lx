@@ -1,0 +1,191 @@
+{
+  "name": "WF-04 CDC Estimation ROI Proposition",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "new-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-new-audit",
+      "name": "Webhook New Audit",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "new-audit"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/audits?id=eq.{{ $json.record.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-audit",
+      "name": "01 Get Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.ANTHROPIC_MODEL }}\",\n  \"max_tokens\": 4096,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Tu es un consultant senior en automatisation pour LX Studio.\\n\\nAUDIT :\\n{{ JSON.stringify($json[0], null, 2) }}\\n\\nGénère un CAHIER DES CHARGES (CDC) détaillé avec :\\n\\n1. Contexte & Objectifs\\n2. Périmètre fonctionnel\\n3. Flows à automatiser (nom, description, étapes)\\n4. Intégrations nécessaires\\n5. Contraintes techniques\\n6. Livrables attendus\\n\\nRéponds en JSON :\\n{\\n  \\\"context\\\": \\\"...\\\",\\n  \\\"objectives\\\": [...],\\n  \\\"flows\\\": [{\\\"name\\\": \\\"...\\\", \\\"description\\\": \\\"...\\\", \\\"complexity\\\": \\\"low|medium|high\\\", \\\"steps\\\": [...]}],\\n  \\\"integrations\\\": [...],\\n  \\\"constraints\\\": {...},\\n  \\\"deliverables\\\": [...]\\n}\"\n  }]\n}",
+        "options": {"timeout": 60000}
+      },
+      "id": "ai-generate-cdc",
+      "name": "02 AI Generate CDC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiText = $input.item.json.content[0].text;\nconst jsonMatch = aiText.match(/\\{[\\s\\S]*\\}/);\nconst cdc = jsonMatch ? JSON.parse(jsonMatch[0]) : {};\n\nreturn { json: { audit_id: $('01 Get Audit').item.json[0].id, company_id: $('01 Get Audit').item.json[0].company_id, cdc: cdc } };"
+      },
+      "id": "parse-cdc",
+      "name": "03 Parse CDC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/specs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"audit_id\": \"{{ $json.audit_id }}\",\n  \"company_id\": \"{{ $json.company_id }}\",\n  \"cdc_document\": {{ JSON.stringify(JSON.stringify($json.cdc)) }},\n  \"flows\": {{ JSON.stringify($json.cdc.flows) }},\n  \"integrations\": {{ JSON.stringify($json.cdc.integrations) }},\n  \"constraints\": {{ JSON.stringify($json.cdc.constraints) }}\n}",
+        "options": {}
+      },
+      "id": "insert-spec",
+      "name": "04 Insert Spec",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Estimate hours per flow\nconst spec = $input.item.json;\nconst flows = JSON.parse(spec.flows);\n\nconst COMPLEXITY_HOURS = {\n  low: parseFloat($env.COMPLEXITY_LOW_HOURS) || 8,\n  medium: parseFloat($env.COMPLEXITY_MEDIUM_HOURS) || 24,\n  high: parseFloat($env.COMPLEXITY_HIGH_HOURS) || 60\n};\n\nlet totalHours = 0;\nflows.forEach(flow => {\n  totalHours += COMPLEXITY_HOURS[flow.complexity] || 24;\n});\n\nconst buffer = parseFloat($env.DEFAULT_BUFFER_PERCENT) || 20;\nconst totalWithBuffer = totalHours * (1 + buffer / 100);\nconst hourlyRate = parseFloat($env.DEFAULT_HOURLY_RATE_CHF) || 150;\nconst totalCost = totalWithBuffer * hourlyRate;\n\n// ROI calculation\nconst audit = $('01 Get Audit').item.json[0];\nconst hoursPerWeek = audit.manual_hours_per_week || 10;\nconst hourlyCostSaved = 50; // CHF per hour saved\nconst yearlyTimeSaved = hoursPerWeek * 52;\nconst yearlyCostSaved = yearlyTimeSaved * hourlyCostSaved;\nconst paybackMonths = (totalCost / (yearlyCostSaved / 12)).toFixed(1);\nconst roi = ((yearlyCostSaved / totalCost) * 100).toFixed(1);\n\nreturn {\n  json: {\n    spec_id: spec.id,\n    company_id: spec.company_id,\n    total_hours: totalWithBuffer,\n    hourly_rate_chf: hourlyRate,\n    total_cost_chf: totalCost,\n    buffer_percent: buffer,\n    confidence_level: 'medium',\n    risks: [],\n    time_saved_hours_per_week: hoursPerWeek,\n    cost_saved_chf_per_year: yearlyCostSaved,\n    payback_months: parseFloat(paybackMonths),\n    roi_percent: parseFloat(roi)\n  }\n};"
+      },
+      "id": "calculate-estimate",
+      "name": "05 Calculate Estimate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/estimates",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-estimate",
+      "name": "06 Insert Estimate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create proposal entry\nreturn {\n  json: {\n    estimate_id: $input.item.json.id,\n    company_id: $input.item.json.company_id,\n    proposal_document_url: `https://docs.google.com/document/d/PLACEHOLDER_${$input.item.json.id}`,\n    status: 'draft'\n  }\n};"
+      },
+      "id": "prepare-proposal",
+      "name": "07 Prepare Proposal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/proposals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-proposal",
+      "name": "08 Insert Proposal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, proposal_id: $json.id, estimate: $('06 Insert Estimate').item.json }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 400]
+    }
+  ],
+  "connections": {
+    "Webhook New Audit": {"main": [[{"node": "01 Get Audit", "type": "main", "index": 0}]]},
+    "01 Get Audit": {"main": [[{"node": "02 AI Generate CDC", "type": "main", "index": 0}]]},
+    "02 AI Generate CDC": {"main": [[{"node": "03 Parse CDC", "type": "main", "index": 0}]]},
+    "03 Parse CDC": {"main": [[{"node": "04 Insert Spec", "type": "main", "index": 0}]]},
+    "04 Insert Spec": {"main": [[{"node": "05 Calculate Estimate", "type": "main", "index": 0}]]},
+    "05 Calculate Estimate": {"main": [[{"node": "06 Insert Estimate", "type": "main", "index": 0}]]},
+    "06 Insert Estimate": {"main": [[{"node": "07 Prepare Proposal", "type": "main", "index": 0}]]},
+    "07 Prepare Proposal": {"main": [[{"node": "08 Insert Proposal", "type": "main", "index": 0}]]},
+    "08 Insert Proposal": {"main": [[{"node": "Respond Success", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

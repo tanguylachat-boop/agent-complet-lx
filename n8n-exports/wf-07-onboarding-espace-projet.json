@@ -1,0 +1,185 @@
+{
+  "name": "WF-07 Onboarding & Espace Projet",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "stripe-payment",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-stripe",
+      "name": "Webhook Stripe Payment",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 400],
+      "webhookId": "stripe-payment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {"value1": "={{ $json.type }}", "value2": "payment_intent.succeeded"}
+          ]
+        }
+      },
+      "id": "if-payment-succeeded",
+      "name": "If Payment Succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: true }) }}"
+      },
+      "id": "respond-ignored",
+      "name": "Respond Ignored",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"name": "company_id", "value": "={{ $json.data.object.metadata.company_id }}", "type": "string"},
+            {"name": "payment_type", "value": "={{ $json.data.object.metadata.payment_type }}", "type": "string"},
+            {"name": "payment_intent_id", "value": "={{ $json.data.object.id }}", "type": "string"}
+          ]
+        }
+      },
+      "id": "extract-metadata",
+      "name": "01 Extract Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {"value1": "={{ $json.payment_type }}", "value2": "deposit"}
+          ]
+        }
+      },
+      "id": "if-deposit",
+      "name": "If Deposit Payment",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: true, message: 'Not a deposit payment' }) }}"
+      },
+      "id": "respond-not-deposit",
+      "name": "Respond Not Deposit",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"},
+            {"name": "Prefer", "value": "return=representation"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.company_id }}\",\n  \"status\": \"onboarding\",\n  \"notion_page_id\": \"placeholder-notion-{{ $json.company_id }}\",\n  \"google_drive_folder_id\": \"placeholder-drive-{{ $json.company_id }}\"\n}",
+        "options": {}
+      },
+      "id": "create-project",
+      "name": "02 Create Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 600]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/companies?id=eq.{{ $('01 Extract Metadata').item.json.company_id }}&select=*,contacts(*)",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-company",
+      "name": "03 Get Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 600]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.FROM_EMAIL }}",
+        "toEmail": "={{ $json[0].contacts[0].email }}",
+        "subject": "Bienvenue chez LX Studio - Prochaines étapes",
+        "emailType": "html",
+        "message": "=<h2>Bienvenue {{ $json[0].name }} ! 🎉</h2>\n<p>Nous avons bien reçu votre acompte. Merci de votre confiance !</p>\n<h3>Prochaines étapes :</h3>\n<ol>\n  <li>Remplir le formulaire d'onboarding : <a href=\"https://form.typeform.com/to/{{ $env.TYPEFORM_ONBOARDING_ID }}\">Accéder au formulaire</a></li>\n  <li>Partager vos accès systèmes (API, identifiants)</li>\n  <li>Planifier le kick-off projet</li>\n</ol>\n<p>Votre espace projet Notion : <a href=\"https://notion.so/{{ $('02 Create Project').item.json.notion_page_id }}\">Accéder</a></p>\n<p>À très vite,<br>L'équipe LX Studio</p>",
+        "options": {}
+      },
+      "id": "send-onboarding-email",
+      "name": "04 Send Onboarding Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1560, 600],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "Gmail SMTP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, project_id: $('02 Create Project').item.json.id }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 600]
+    }
+  ],
+  "connections": {
+    "Webhook Stripe Payment": {"main": [[{"node": "If Payment Succeeded", "type": "main", "index": 0}]]},
+    "If Payment Succeeded": {
+      "main": [
+        [{"node": "Respond Ignored", "type": "main", "index": 0}],
+        [{"node": "01 Extract Metadata", "type": "main", "index": 0}]
+      ]
+    },
+    "01 Extract Metadata": {"main": [[{"node": "If Deposit Payment", "type": "main", "index": 0}]]},
+    "If Deposit Payment": {
+      "main": [
+        [{"node": "Respond Not Deposit", "type": "main", "index": 0}],
+        [{"node": "02 Create Project", "type": "main", "index": 0}]
+      ]
+    },
+    "02 Create Project": {"main": [[{"node": "03 Get Company", "type": "main", "index": 0}]]},
+    "03 Get Company": {"main": [[{"node": "04 Send Onboarding Email", "type": "main", "index": 0}]]},
+    "04 Send Onboarding Email": {"main": [[{"node": "Respond Success", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

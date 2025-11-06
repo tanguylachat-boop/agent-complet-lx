@@ -1,0 +1,611 @@
+{
+  "name": "WF-00 Shared Utils",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "utils-log",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-log",
+      "name": "Webhook Log",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "utils-log"
+    },
+    {
+      "parameters": {
+        "path": "utils-idempotency-check",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-idempotency",
+      "name": "Webhook Idempotency",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 600],
+      "webhookId": "utils-idempotency-check"
+    },
+    {
+      "parameters": {
+        "path": "utils-notify-telegram",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-telegram",
+      "name": "Webhook Telegram",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 900],
+      "webhookId": "utils-notify-telegram"
+    },
+    {
+      "parameters": {
+        "path": "utils-error-handler",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-error",
+      "name": "Webhook Error Handler",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 1200],
+      "webhookId": "utils-error-handler"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Mask sensitive data and truncate if > 4KB\n\nconst item = $input.item.json;\n\n// Sensitive keys to mask\nconst sensitiveKeys = [\n  'password', 'token', 'api_key', 'secret', 'apikey',\n  'authorization', 'credit_card', 'ssn', 'stripe_key',\n  'private_key', 'client_secret'\n];\n\nfunction maskSensitiveData(obj) {\n  if (!obj) return obj;\n  const masked = JSON.parse(JSON.stringify(obj));\n  \n  function recurse(o) {\n    for (let key in o) {\n      if (typeof o[key] === 'object' && o[key] !== null) {\n        recurse(o[key]);\n      } else if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk))) {\n        o[key] = '***MASKED***';\n      }\n    }\n  }\n  \n  recurse(masked);\n  return masked;\n}\n\nfunction truncatePayload(payload, maxBytes = 4096) {\n  if (!payload) return null;\n  let json = JSON.stringify(payload);\n  \n  if (Buffer.byteLength(json, 'utf8') <= maxBytes) {\n    return payload;\n  }\n  \n  // Truncate with indicator\n  const truncated = json.substring(0, maxBytes - 50);\n  try {\n    return JSON.parse(truncated + '\"... [TRUNCATED]\"}');\n  } catch (e) {\n    return { _truncated: true, _original_size: json.length };\n  }\n}\n\nconst maskedPayload = item.payload ? maskSensitiveData(item.payload) : null;\nconst finalPayload = truncatePayload(maskedPayload);\n\nreturn {\n  json: {\n    workflow: item.workflow || 'unknown',\n    run_id: item.run_id || null,\n    step: item.step || null,\n    level: item.level || 'info',\n    message: item.message || 'No message',\n    payload: finalPayload\n  }\n};"
+      },
+      "id": "function-mask-log",
+      "name": "01 Mask & Truncate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/execution_logs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "workflow",
+              "value": "={{ $json.workflow }}"
+            },
+            {
+              "name": "run_id",
+              "value": "={{ $json.run_id }}"
+            },
+            {
+              "name": "step",
+              "value": "={{ $json.step }}"
+            },
+            {
+              "name": "level",
+              "value": "={{ $json.level }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify($json.payload) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 3,
+            "retryOnStatusCodeList": [500, 502, 503, 504]
+          }
+        }
+      },
+      "id": "http-insert-log",
+      "name": "02 Insert Log to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, log_id: $json.id }) }}"
+      },
+      "id": "respond-log-success",
+      "name": "Respond Log Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check idempotency\n\nconst item = $input.item.json;\nconst workflow = item.workflow || 'unknown';\nconst key = item.idempotency_key;\n\nif (!key) {\n  throw new Error('idempotency_key is required');\n}\n\nreturn {\n  json: {\n    workflow,\n    idempotency_key: key\n  }\n};"
+      },
+      "id": "function-prepare-idempotency",
+      "name": "01 Prepare Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/idempotency_keys?key=eq.{{ $json.idempotency_key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-check-key",
+      "name": "02 Check Key Exists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-duplicate",
+      "name": "If Duplicate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ isDuplicate: true, message: 'Already processed' }) }}"
+      },
+      "id": "respond-duplicate",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/idempotency_keys",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $('01 Prepare Check').item.json.idempotency_key }}"
+            },
+            {
+              "name": "workflow",
+              "value": "={{ $('01 Prepare Check').item.json.workflow }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-insert-key",
+      "name": "03 Insert Key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ isDuplicate: false, message: 'New key registered' }) }}"
+      },
+      "id": "respond-new",
+      "name": "Respond New",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Telegram notification\n\nconst item = $input.item.json;\nconst title = item.title || 'Notification';\nconst text = item.text || 'No message';\nconst severity = item.severity || 'info';\n\n// Emoji mapping\nconst emojis = {\n  info: 'ℹ️',\n  warn: '⚠️',\n  error: '❌',\n  success: '✅'\n};\n\nconst emoji = emojis[severity] || 'ℹ️';\n\n// Format message\nconst message = `${emoji} *${title}*\\n\\n${text}`;\n\nreturn {\n  json: {\n    chat_id: $env.TELEGRAM_CHAT_ID,\n    text: message,\n    parse_mode: 'Markdown'\n  }\n};"
+      },
+      "id": "function-format-telegram",
+      "name": "01 Format Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 900]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.text }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "={{ $json.parse_mode }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "maxRetries": 2
+          }
+        }
+      },
+      "id": "http-send-telegram",
+      "name": "02 Send Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 900]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message_id: $json.result.message_id }) }}"
+      },
+      "id": "respond-telegram-success",
+      "name": "Respond Telegram Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handler: log + notify\n\nconst item = $input.item.json;\nconst workflow = item.workflow || 'unknown';\nconst step = item.step || 'unknown';\nconst error = item.error || 'Unknown error';\nconst context = item.context || {};\n\nconst errorLog = {\n  workflow,\n  run_id: context.run_id || null,\n  step,\n  level: 'error',\n  message: error,\n  payload: context\n};\n\nreturn {\n  json: errorLog\n};"
+      },
+      "id": "function-format-error",
+      "name": "01 Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 1200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "http-log-error",
+      "name": "02 Log Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 1200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-notify-telegram",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "=Error in {{ $('01 Format Error').item.json.workflow }}"
+            },
+            {
+              "name": "text",
+              "value": "=Step: {{ $('01 Format Error').item.json.step }}\\n\\nError: {{ $('01 Format Error').item.json.message }}"
+            },
+            {
+              "name": "severity",
+              "value": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-notify-error",
+      "name": "03 Notify Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 1200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, error_handled: true, run_id: $('01 Format Error').item.json.run_id }) }}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-error-handled",
+      "name": "Respond Error Handled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 1200]
+    }
+  ],
+  "connections": {
+    "Webhook Log": {
+      "main": [
+        [
+          {
+            "node": "01 Mask & Truncate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Mask & Truncate": {
+      "main": [
+        [
+          {
+            "node": "02 Insert Log to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Insert Log to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Respond Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Idempotency": {
+      "main": [
+        [
+          {
+            "node": "01 Prepare Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Prepare Check": {
+      "main": [
+        [
+          {
+            "node": "02 Check Key Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Check Key Exists": {
+      "main": [
+        [
+          {
+            "node": "If Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "03 Insert Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Insert Key": {
+      "main": [
+        [
+          {
+            "node": "Respond New",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Telegram": {
+      "main": [
+        [
+          {
+            "node": "01 Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Format Message": {
+      "main": [
+        [
+          {
+            "node": "02 Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Send Telegram": {
+      "main": [
+        [
+          {
+            "node": "Respond Telegram Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Error Handler": {
+      "main": [
+        [
+          {
+            "node": "01 Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Format Error": {
+      "main": [
+        [
+          {
+            "node": "02 Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Log Error": {
+      "main": [
+        [
+          {
+            "node": "03 Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Notify Error": {
+      "main": [
+        [
+          {
+            "node": "Respond Error Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

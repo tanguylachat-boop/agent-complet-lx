@@ -1,0 +1,204 @@
+{
+  "name": "WF-10 Run Maintenance Reports",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-monthly",
+      "name": "Cron Monthly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "path": "nps-response",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-nps",
+      "name": "Webhook NPS Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 600],
+      "webhookId": "nps-response"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/projects?status=eq.live",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-live-projects",
+      "name": "01 Get Live Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate monthly report per project\nconst projects = $input.all().map(item => item.json);\n\nconst now = new Date();\nconst reportPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;\n\nreturn projects.map(project => {\n  return {\n    json: {\n      project_id: project.id,\n      company_id: project.company_id,\n      report_period: reportPeriod\n    }\n  };\n});"
+      },
+      "id": "prepare-reports",
+      "name": "02 Prepare Reports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/execution_logs?workflow=like.*&created_at=gte.{{ new Date(new Date().setDate(1)).toISOString() }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"}
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-logs",
+      "name": "03 Get Execution Logs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Analyze logs and generate report metrics\nconst logs = $input.item.json;\nconst project = $('02 Prepare Reports').item.json;\n\nconst executionsCount = logs.length;\nconst errorsCount = logs.filter(l => l.level === 'error').length;\nconst uptimePercent = executionsCount > 0 ? ((executionsCount - errorsCount) / executionsCount * 100).toFixed(2) : 100;\n\n// Estimate hours saved (placeholder logic)\nconst hoursSaved = executionsCount * 0.5; // assume each execution saves 30min\n\nreturn {\n  json: {\n    project_id: project.project_id,\n    company_id: project.company_id,\n    report_period: project.report_period,\n    executions_count: executionsCount,\n    hours_saved: hoursSaved,\n    errors_count: errorsCount,\n    uptime_percent: parseFloat(uptimePercent),\n    improvements_suggested: [],\n    report_document_url: null\n  }\n};"
+      },
+      "id": "analyze-metrics",
+      "name": "04 Analyze Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/maintenance_reports",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-report",
+      "name": "05 Insert Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract NPS data from Typeform\nconst answers = $input.item.json.form_response?.answers || [];\n\nfunction getAnswer(ref, defaultValue = null) {\n  const answer = answers.find(a => a.field.ref === ref);\n  if (!answer) return defaultValue;\n  if (answer.type === 'number') return answer.number;\n  if (answer.type === 'text') return answer.text;\n  return defaultValue;\n}\n\nconst companyId = $input.item.json.form_response?.hidden?.company_id;\n\nreturn {\n  json: {\n    company_id: companyId,\n    score: getAnswer('nps_score'),\n    feedback: getAnswer('nps_reason'),\n    improvements_suggested: getAnswer('nps_improvements')\n  }\n};"
+      },
+      "id": "parse-nps",
+      "name": "01 Parse NPS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/nps_responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "insert-nps",
+      "name": "02 Insert NPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Send thank you based on score\nconst nps = $input.item.json;\n\nlet message = '';\nif (nps.score >= 9) {\n  message = `🌟 Merci pour votre excellent retour (${nps.score}/10) ! Nous sommes ravis de travailler avec vous.`;\n} else if (nps.score >= 7) {\n  message = `👍 Merci pour votre retour (${nps.score}/10). Nous prenons note de vos suggestions pour continuer à améliorer nos services.`;\n} else {\n  message = `Merci pour votre retour (${nps.score}/10). Nous sommes désolés que votre expérience n'ait pas été optimale. Un membre de notre équipe vous contactera rapidement.`;\n}\n\nreturn {\n  json: {\n    title: 'NPS Response Received',\n    text: message,\n    severity: nps.score >= 7 ? 'success' : 'warn'\n  }\n};"
+      },
+      "id": "prepare-nps-notify",
+      "name": "03 Prepare NPS Notify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-notify-telegram",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "notify-nps",
+      "name": "04 Notify NPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, nps_recorded: true }) }}"
+      },
+      "id": "respond-nps",
+      "name": "Respond NPS",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 600]
+    }
+  ],
+  "connections": {
+    "Cron Monthly": {"main": [[{"node": "01 Get Live Projects", "type": "main", "index": 0}]]},
+    "01 Get Live Projects": {"main": [[{"node": "02 Prepare Reports", "type": "main", "index": 0}]]},
+    "02 Prepare Reports": {"main": [[{"node": "03 Get Execution Logs", "type": "main", "index": 0}]]},
+    "03 Get Execution Logs": {"main": [[{"node": "04 Analyze Metrics", "type": "main", "index": 0}]]},
+    "04 Analyze Metrics": {"main": [[{"node": "05 Insert Report", "type": "main", "index": 0}]]},
+    "Webhook NPS Response": {"main": [[{"node": "01 Parse NPS", "type": "main", "index": 0}]]},
+    "01 Parse NPS": {"main": [[{"node": "02 Insert NPS", "type": "main", "index": 0}]]},
+    "02 Insert NPS": {"main": [[{"node": "03 Prepare NPS Notify", "type": "main", "index": 0}]]},
+    "03 Prepare NPS Notify": {"main": [[{"node": "04 Notify NPS", "type": "main", "index": 0}]]},
+    "04 Notify NPS": {"main": [[{"node": "Respond NPS", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

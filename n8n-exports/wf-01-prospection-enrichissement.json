@@ -1,0 +1,488 @@
+{
+  "name": "WF-01 Prospection & Enrichissement",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron-weekly",
+      "name": "Cron Weekly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "path": "prospect-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-manual",
+      "name": "Webhook Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 500],
+      "webhookId": "prospect-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log workflow start\nreturn [{\n  json: {\n    workflow: 'wf-01-prospection',\n    run_id: $execution.id,\n    step: 'Start',\n    level: 'info',\n    message: 'Prospection workflow started',\n    payload: {\n      trigger: $node.name.includes('Cron') ? 'cron' : 'manual',\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "log-start",
+      "name": "00 Log Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-log-start",
+      "name": "Call Log Utils",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://maps.googleapis.com/maps/api/place/textsearch/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query || 'PME Jura Suisse' }}"
+            },
+            {
+              "name": "key",
+              "value": "={{ $env.GOOGLE_PLACES_API_KEY }}"
+            },
+            {
+              "name": "region",
+              "value": "ch"
+            },
+            {
+              "name": "language",
+              "value": "fr"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxRetries": 3,
+            "retryOnStatusCodeList": [429, 500, 502, 503, 504]
+          }
+        }
+      },
+      "id": "http-google-places",
+      "name": "01 Fetch Google Places",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize and deduplicate companies from Google Places\n\nconst crypto = require('crypto');\n\nconst results = $input.item.json.results || [];\n\nfunction generateHash(name, address) {\n  const normalized = `${name}${address}`.toLowerCase().replace(/\\s+/g, '');\n  return crypto.createHash('md5').update(normalized).digest('hex');\n}\n\nfunction normalizePhone(phone) {\n  if (!phone) return null;\n  return phone.replace(/[^0-9+]/g, '');\n}\n\nconst companies = results.map(place => {\n  const name = place.name;\n  const address = place.formatted_address || '';\n  const hash = generateHash(name, address);\n  \n  return {\n    name: name,\n    address: address,\n    city: place.vicinity || null,\n    postal_code: null, // extract from address if needed\n    country: 'CH',\n    phone: null, // Google Places basic doesn't always have phone\n    website: null,\n    industry: place.types?.[0] || null,\n    source: 'google_places',\n    status: 'prospect',\n    hash_key: hash,\n    google_place_id: place.place_id,\n    rating: place.rating || null,\n    user_ratings_total: place.user_ratings_total || 0\n  };\n});\n\n// Deduplicate by hash_key\nconst unique = companies.reduce((acc, company) => {\n  if (!acc.find(c => c.hash_key === company.hash_key)) {\n    acc.push(company);\n  }\n  return acc;\n}, []);\n\nreturn unique.map(c => ({ json: c }));"
+      },
+      "id": "function-normalize",
+      "name": "02 Normalize & Dedup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log normalization results\nconst count = $input.all().length;\n\nreturn [{\n  json: {\n    workflow: 'wf-01-prospection',\n    run_id: $execution.id,\n    step: '02 Normalize & Dedup',\n    level: 'info',\n    message: `Normalized ${count} unique companies`,\n    payload: {\n      count: count,\n      sample: $input.first().json\n    }\n  }\n}];"
+      },
+      "id": "log-normalize",
+      "name": "Log Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-log-normalize",
+      "name": "Call Log Utils 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/companies",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000,
+          "retry": {
+            "maxRetries": 3
+          },
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "id": "http-upsert-companies",
+      "name": "03 Upsert Companies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "aggregate-results",
+      "name": "04 Aggregate Results",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Count inserted/updated\nconst items = $input.all();\nconst count = items.length;\n\nreturn [{\n  json: {\n    workflow: 'wf-01-prospection',\n    run_id: $execution.id,\n    step: '03 Upsert Companies',\n    level: 'info',\n    message: `Upserted ${count} companies to Supabase`,\n    payload: {\n      total_upserted: count\n    }\n  }\n}];"
+      },
+      "id": "log-upsert",
+      "name": "Log Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-log-upsert",
+      "name": "Call Log Utils 3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Telegram summary\nconst count = $('04 Aggregate Results').first().json.aggregatedData?.length || 0;\n\nreturn [{\n  json: {\n    title: '✅ Prospection Completed',\n    text: `Successfully synced ${count} companies from Google Places to Supabase.\\n\\nWorkflow: wf-01-prospection\\nRun ID: ${$execution.id}`,\n    severity: 'success'\n  }\n}];"
+      },
+      "id": "prepare-telegram",
+      "name": "05 Prepare Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-notify-telegram",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-notify",
+      "name": "06 Notify Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2440, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, companies_synced: $('04 Aggregate Results').first().json.aggregatedData?.length || 0 }) }}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2660, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handler\nreturn [{\n  json: {\n    workflow: 'wf-01-prospection',\n    step: $node.name,\n    error: $json.error?.message || 'Unknown error',\n    context: {\n      run_id: $execution.id,\n      error_details: $json.error\n    }\n  }\n}];"
+      },
+      "id": "on-error",
+      "name": "On Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.BASE_DOMAIN }}/webhook/utils-error-handler",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "call-error-handler",
+      "name": "Call Error Handler",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 700]
+    }
+  ],
+  "connections": {
+    "Cron Weekly": {
+      "main": [
+        [
+          {
+            "node": "00 Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "00 Log Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "00 Log Start": {
+      "main": [
+        [
+          {
+            "node": "Call Log Utils",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Log Utils": {
+      "main": [
+        [
+          {
+            "node": "01 Fetch Google Places",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "01 Fetch Google Places": {
+      "main": [
+        [
+          {
+            "node": "02 Normalize & Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "02 Normalize & Dedup": {
+      "main": [
+        [
+          {
+            "node": "Log Normalize",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "03 Upsert Companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Normalize": {
+      "main": [
+        [
+          {
+            "node": "Call Log Utils 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "03 Upsert Companies": {
+      "main": [
+        [
+          {
+            "node": "04 Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "04 Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Log Upsert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "05 Prepare Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Upsert": {
+      "main": [
+        [
+          {
+            "node": "Call Log Utils 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "05 Prepare Telegram": {
+      "main": [
+        [
+          {
+            "node": "06 Notify Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "06 Notify Telegram": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On Error": {
+      "main": [
+        [
+          {
+            "node": "Call Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "On Error"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-15T12:00:00.000Z",
+  "versionId": "1"
+}

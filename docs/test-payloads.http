@@ -1,0 +1,607 @@
+# ============================================================================
+# LX Studio - n8n Workflows Test Payloads
+# ============================================================================
+# Utilisation : VS Code avec l'extension "REST Client"
+# Ou Postman/Insomnia en copiant les requêtes
+#
+# 1. Remplacer {{BASE_DOMAIN}} par votre URL n8n
+# 2. Activer les workflows dans n8n avant de tester
+# 3. Vérifier les logs dans Supabase après chaque requête
+# ============================================================================
+
+@BASE_DOMAIN = https://automations.lxstudio.ch
+
+# ============================================================================
+# WF-00 - SHARED UTILS (Workflows utilitaires)
+# ============================================================================
+
+### Test: utils-log (INFO)
+POST {{BASE_DOMAIN}}/webhook/utils-log
+Content-Type: application/json
+
+{
+  "workflow": "test-manual",
+  "run_id": "test-12345",
+  "step": "Manual Test",
+  "level": "info",
+  "message": "Testing log utility",
+  "payload": {
+    "test": true,
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+}
+
+### Test: utils-log (ERROR)
+POST {{BASE_DOMAIN}}/webhook/utils-log
+Content-Type: application/json
+
+{
+  "workflow": "test-manual",
+  "run_id": "test-12345",
+  "step": "Manual Test",
+  "level": "error",
+  "message": "Testing error logging",
+  "payload": {
+    "error": "Sample error for testing",
+    "context": {
+      "company_id": "123e4567-e89b-12d3-a456-426614174000"
+    }
+  }
+}
+
+### Test: utils-idempotency-check (first call)
+POST {{BASE_DOMAIN}}/webhook/utils-idempotency-check
+Content-Type: application/json
+
+{
+  "workflow": "test-manual",
+  "idempotency_key": "test-key-12345-abc"
+}
+
+### Test: utils-idempotency-check (duplicate call)
+POST {{BASE_DOMAIN}}/webhook/utils-idempotency-check
+Content-Type: application/json
+
+{
+  "workflow": "test-manual",
+  "idempotency_key": "test-key-12345-abc"
+}
+
+### Test: utils-notify-telegram
+POST {{BASE_DOMAIN}}/webhook/utils-notify-telegram
+Content-Type: application/json
+
+{
+  "title": "Test Notification",
+  "text": "Ceci est un test de notification Telegram depuis n8n",
+  "severity": "info"
+}
+
+### Test: utils-error-handler
+POST {{BASE_DOMAIN}}/webhook/utils-error-handler
+Content-Type: application/json
+
+{
+  "workflow": "test-manual",
+  "step": "Test Step",
+  "error": "Sample error message",
+  "context": {
+    "company_id": "123e4567-e89b-12d3-a456-426614174000",
+    "action": "test_action"
+  }
+}
+
+# ============================================================================
+# WF-01 - PROSPECTION & ENRICHISSEMENT
+# ============================================================================
+
+### Trigger: Sync Prospects (manual webhook)
+POST {{BASE_DOMAIN}}/webhook/prospect-sync
+Content-Type: application/json
+
+{
+  "trigger": "manual",
+  "query": "PME Jura Suisse",
+  "limit": 10
+}
+
+# ============================================================================
+# WF-02 - CONTACT & AUDIT EXPRESS
+# ============================================================================
+
+### Trigger: Start Contact Campaign
+POST {{BASE_DOMAIN}}/webhook/contact-start
+Content-Type: application/json
+
+{
+  "company_id": "123e4567-e89b-12d3-a456-426614174000",
+  "contact_email": "jean.dupont@example.ch",
+  "company_name": "Example SA"
+}
+
+# ============================================================================
+# WF-03 - AUDIT STRUCTURATION
+# ============================================================================
+
+### Webhook: Typeform Audit Response
+POST {{BASE_DOMAIN}}/webhook/typeform-audit
+Content-Type: application/json
+
+{
+  "event_id": "01HXXX123456789",
+  "event_type": "form_response",
+  "form_response": {
+    "form_id": "XxXxXxXx",
+    "token": "xxx123456789",
+    "landed_at": "2025-01-15T10:30:00Z",
+    "submitted_at": "2025-01-15T10:35:42Z",
+    "hidden": {
+      "source": "linkedin_ad",
+      "utm_campaign": "swiss_pme_q1"
+    },
+    "answers": [
+      {
+        "type": "text",
+        "text": "Café du Jura SA",
+        "field": {
+          "id": "field_company_name",
+          "type": "short_text",
+          "ref": "company_name"
+        }
+      },
+      {
+        "type": "url",
+        "url": "https://cafedujura.ch",
+        "field": {
+          "id": "field_website",
+          "type": "website",
+          "ref": "website"
+        }
+      },
+      {
+        "type": "email",
+        "email": "jean.dupont@cafedujura.ch",
+        "field": {
+          "id": "field_email",
+          "type": "email",
+          "ref": "email"
+        }
+      },
+      {
+        "type": "phone_number",
+        "phone_number": "+41 32 123 45 67",
+        "field": {
+          "id": "field_phone",
+          "type": "phone_number",
+          "ref": "phone"
+        }
+      },
+      {
+        "type": "choice",
+        "choice": {
+          "label": "Hôtellerie/Restauration"
+        },
+        "field": {
+          "id": "field_industry",
+          "type": "dropdown",
+          "ref": "industry"
+        }
+      },
+      {
+        "type": "choice",
+        "choice": {
+          "label": "10-50 employés"
+        },
+        "field": {
+          "id": "field_size",
+          "type": "multiple_choice",
+          "ref": "size"
+        }
+      },
+      {
+        "type": "text",
+        "text": "Nous perdons beaucoup de temps à gérer manuellement les commandes et la facturation. Les erreurs sont fréquentes.",
+        "field": {
+          "id": "field_challenge",
+          "type": "long_text",
+          "ref": "challenge"
+        }
+      },
+      {
+        "type": "choices",
+        "choices": {
+          "labels": [
+            "Saisie de commandes",
+            "Facturation",
+            "Suivi des stocks",
+            "Relances clients"
+          ]
+        },
+        "field": {
+          "id": "field_manual_processes",
+          "type": "multiple_choice",
+          "ref": "manual_processes"
+        }
+      },
+      {
+        "type": "number",
+        "number": 15,
+        "field": {
+          "id": "field_hours_manual",
+          "type": "number",
+          "ref": "hours_manual"
+        }
+      },
+      {
+        "type": "boolean",
+        "boolean": false,
+        "field": {
+          "id": "field_current_tools",
+          "type": "yes_no",
+          "ref": "current_tools"
+        }
+      },
+      {
+        "type": "number",
+        "number": 7,
+        "field": {
+          "id": "field_budget",
+          "type": "opinion_scale",
+          "ref": "budget"
+        }
+      },
+      {
+        "type": "choice",
+        "choice": {
+          "label": "Gagner du temps sur les tâches répétitives"
+        },
+        "field": {
+          "id": "field_goal",
+          "type": "dropdown",
+          "ref": "goal"
+        }
+      },
+      {
+        "type": "choice",
+        "choice": {
+          "label": "1-3 mois"
+        },
+        "field": {
+          "id": "field_timeline",
+          "type": "dropdown",
+          "ref": "timeline"
+        }
+      },
+      {
+        "type": "text",
+        "text": "Nous sommes ouverts à discuter.",
+        "field": {
+          "id": "field_comments",
+          "type": "long_text",
+          "ref": "comments"
+        }
+      }
+    ]
+  }
+}
+
+### Webhook: Voice Audit Transcript
+POST {{BASE_DOMAIN}}/webhook/voice-audit
+Content-Type: application/json
+
+{
+  "call_id": "call-abc123",
+  "company_name": "Garage Moderne SA",
+  "contact_phone": "+41 79 123 45 67",
+  "transcript": "Bonjour, je suis Jean Dupont du Garage Moderne. Nous avons environ 20 employés et nous gérons manuellement toutes nos prises de rendez-vous et nos factures. Ça nous prend environ 10 heures par semaine et nous aimerions automatiser ça. Notre budget serait autour de 15'000 CHF.",
+  "duration_seconds": 180,
+  "timestamp": "2025-01-15T11:20:00Z"
+}
+
+# ============================================================================
+# WF-04 - CDC, ESTIMATION, ROI, PROPOSITION
+# ============================================================================
+
+### Trigger: New Audit (simulate Supabase trigger)
+POST {{BASE_DOMAIN}}/webhook/new-audit
+Content-Type: application/json
+
+{
+  "type": "INSERT",
+  "table": "audits",
+  "record": {
+    "id": "audit-123e4567-e89b-12d3-a456-426614174001",
+    "company_id": "123e4567-e89b-12d3-a456-426614174000",
+    "source": "typeform",
+    "structured_data": {
+      "pain_points": ["Saisie manuelle commandes", "Facturation répétitive"],
+      "manual_tasks": ["Commandes", "Facturation", "Relances"],
+      "manual_hours_per_week": 15,
+      "budget_range": 7,
+      "primary_goal": "Gagner du temps",
+      "desired_timeline": "1-3 mois"
+    },
+    "created_at": "2025-01-15T10:35:42Z"
+  }
+}
+
+# ============================================================================
+# WF-05 - CLOSING ASSIST
+# ============================================================================
+
+### Trigger: Pre-meeting Brief (simulate cron 1h before)
+POST {{BASE_DOMAIN}}/webhook/pre-meeting-brief
+Content-Type: application/json
+
+{
+  "meeting_id": "evt-google-calendar-12345",
+  "company_id": "123e4567-e89b-12d3-a456-426614174000",
+  "meeting_time": "2025-01-16T14:00:00Z",
+  "attendees": ["jean.dupont@example.ch"]
+}
+
+# ============================================================================
+# WF-06 - PAIEMENTS & CONTRAT
+# ============================================================================
+
+### Webhook: Proposal Accepted
+POST {{BASE_DOMAIN}}/webhook/proposal-accepted
+Content-Type: application/json
+
+{
+  "proposal_id": "prop-123e4567-e89b-12d3-a456-426614174002",
+  "company_id": "123e4567-e89b-12d3-a456-426614174000",
+  "estimate_id": "est-123e4567-e89b-12d3-a456-426614174003",
+  "total_cost_chf": 15000,
+  "accepted_at": "2025-01-15T16:30:00Z",
+  "accepted_by": "jean.dupont@example.ch"
+}
+
+### Webhook: Stripe Payment Success
+POST {{BASE_DOMAIN}}/webhook/stripe-payment
+Content-Type: application/json
+
+{
+  "id": "evt_stripe_12345",
+  "type": "payment_intent.succeeded",
+  "data": {
+    "object": {
+      "id": "pi_12345ABCDE",
+      "amount": 450000,
+      "currency": "chf",
+      "status": "succeeded",
+      "metadata": {
+        "company_id": "123e4567-e89b-12d3-a456-426614174000",
+        "payment_type": "deposit"
+      },
+      "created": 1705329000
+    }
+  }
+}
+
+### Webhook: Stripe Payment Failed
+POST {{BASE_DOMAIN}}/webhook/stripe-payment
+Content-Type: application/json
+
+{
+  "id": "evt_stripe_67890",
+  "type": "payment_intent.payment_failed",
+  "data": {
+    "object": {
+      "id": "pi_67890FGHIJ",
+      "amount": 450000,
+      "currency": "chf",
+      "status": "requires_payment_method",
+      "last_payment_error": {
+        "code": "card_declined",
+        "message": "Your card was declined"
+      },
+      "metadata": {
+        "company_id": "123e4567-e89b-12d3-a456-426614174000",
+        "payment_type": "deposit"
+      },
+      "created": 1705329000
+    }
+  }
+}
+
+# ============================================================================
+# WF-07 - ONBOARDING & ESPACE PROJET
+# ============================================================================
+
+### Webhook: Onboarding Completed
+POST {{BASE_DOMAIN}}/webhook/onboarding-completed
+Content-Type: application/json
+
+{
+  "form_response": {
+    "form_id": "YyYyYyYy",
+    "submitted_at": "2025-01-17T09:00:00Z",
+    "hidden": {
+      "company_id": "123e4567-e89b-12d3-a456-426614174000"
+    },
+    "answers": [
+      {
+        "type": "text",
+        "text": "Marie Martin",
+        "field": { "ref": "tech_contact" }
+      },
+      {
+        "type": "email",
+        "email": "marie.martin@example.ch",
+        "field": { "ref": "tech_email" }
+      },
+      {
+        "type": "text",
+        "text": "API Stripe : sk_test_xxx, API Mailchimp : abc123",
+        "field": { "ref": "access_details" }
+      },
+      {
+        "type": "text",
+        "text": "Environ 200 commandes par jour, 50 factures",
+        "field": { "ref": "data_volumes" }
+      },
+      {
+        "type": "text",
+        "text": "Éviter les exécutions entre 12h-13h et après 18h",
+        "field": { "ref": "timing_constraints" }
+      },
+      {
+        "type": "choices",
+        "choices": { "labels": ["Production", "Staging"] },
+        "field": { "ref": "environments" }
+      }
+    ]
+  }
+}
+
+# ============================================================================
+# WF-08 - DÉVELOPPEMENT & INTÉGRATION
+# ============================================================================
+
+### Trigger: Dev Start (manual or after onboarding)
+POST {{BASE_DOMAIN}}/webhook/dev-start
+Content-Type: application/json
+
+{
+  "project_id": "proj-123e4567-e89b-12d3-a456-426614174004",
+  "company_id": "123e4567-e89b-12d3-a456-426614174000",
+  "spec_id": "spec-123e4567-e89b-12d3-a456-426614174005"
+}
+
+# ============================================================================
+# WF-09 - RECETTE, GO-LIVE, FORMATION
+# ============================================================================
+
+### Webhook: Ready for UAT
+POST {{BASE_DOMAIN}}/webhook/ready-for-uat
+Content-Type: application/json
+
+{
+  "project_id": "proj-123e4567-e89b-12d3-a456-426614174004",
+  "company_id": "123e4567-e89b-12d3-a456-426614174000",
+  "workflows_count": 5,
+  "ready_date": "2025-02-15T10:00:00Z"
+}
+
+### Webhook: UAT Checklist Submitted
+POST {{BASE_DOMAIN}}/webhook/uat-checklist
+Content-Type: application/json
+
+{
+  "form_response": {
+    "form_id": "ZzZzZzZz",
+    "submitted_at": "2025-02-20T14:00:00Z",
+    "hidden": {
+      "project_id": "proj-123e4567-e89b-12d3-a456-426614174004"
+    },
+    "answers": [
+      {
+        "type": "boolean",
+        "boolean": true,
+        "field": { "ref": "flows_working" }
+      },
+      {
+        "type": "text",
+        "text": "Un problème mineur sur le flow facturation : les dates ne sont pas au bon format",
+        "field": { "ref": "errors_found" }
+      },
+      {
+        "type": "boolean",
+        "boolean": true,
+        "field": { "ref": "performance_ok" }
+      },
+      {
+        "type": "boolean",
+        "boolean": true,
+        "field": { "ref": "docs_clear" }
+      },
+      {
+        "type": "boolean",
+        "boolean": false,
+        "field": { "ref": "ready_golive" }
+      }
+    ]
+  }
+}
+
+# ============================================================================
+# WF-10 - RUN, MAINTENANCE, REPORTS
+# ============================================================================
+
+### Trigger: Monthly Report (simulate cron)
+POST {{BASE_DOMAIN}}/webhook/monthly-report-trigger
+Content-Type: application/json
+
+{
+  "trigger": "cron",
+  "report_month": "2025-01",
+  "projects": [
+    "proj-123e4567-e89b-12d3-a456-426614174004"
+  ]
+}
+
+### Webhook: NPS Response
+POST {{BASE_DOMAIN}}/webhook/nps-response
+Content-Type: application/json
+
+{
+  "form_response": {
+    "form_id": "NpNpNpNp",
+    "submitted_at": "2025-01-30T10:00:00Z",
+    "hidden": {
+      "company_id": "123e4567-e89b-12d3-a456-426614174000"
+    },
+    "answers": [
+      {
+        "type": "number",
+        "number": 9,
+        "field": { "ref": "nps_score" }
+      },
+      {
+        "type": "text",
+        "text": "Excellent service, très réactifs et les automatisations fonctionnent parfaitement !",
+        "field": { "ref": "nps_reason" }
+      },
+      {
+        "type": "text",
+        "text": "Peut-être proposer plus de templates prêts à l'emploi.",
+        "field": { "ref": "nps_improvements" }
+      }
+    ]
+  }
+}
+
+### Webhook: Stripe Subscription Payment Failed
+POST {{BASE_DOMAIN}}/webhook/stripe-payment
+Content-Type: application/json
+
+{
+  "id": "evt_stripe_invoice_fail",
+  "type": "invoice.payment_failed",
+  "data": {
+    "object": {
+      "id": "in_12345",
+      "customer": "cus_ABC123",
+      "subscription": "sub_XYZ789",
+      "amount_due": 29900,
+      "currency": "chf",
+      "attempt_count": 1,
+      "metadata": {
+        "company_id": "123e4567-e89b-12d3-a456-426614174000"
+      }
+    }
+  }
+}
+
+# ============================================================================
+# VERIFICATION QUERIES (Supabase)
+# ============================================================================
+
+### Après tests, vérifier dans Supabase :
+
+# SELECT * FROM execution_logs ORDER BY created_at DESC LIMIT 20;
+# SELECT * FROM idempotency_keys ORDER BY created_at DESC LIMIT 10;
+# SELECT * FROM companies WHERE name LIKE '%Jura%';
+# SELECT * FROM audits ORDER BY created_at DESC LIMIT 5;
+# SELECT * FROM payments ORDER BY created_at DESC LIMIT 5;
